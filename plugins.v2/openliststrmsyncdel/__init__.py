@@ -3,6 +3,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlparse
 
+from app.core.config import settings
 from app.core.event import Event, eventmanager
 from app.log import logger
 from app.plugins import _PluginBase
@@ -64,6 +65,8 @@ class OpenListStrmSyncDel(_PluginBase):
             logger.info(
                 f"{self.plugin_name} 已启用，监控源文件路径前缀：{self._path_prefixes if self._path_prefixes else '未配置'}"
             )
+            if self.get_state():
+                self.__warmup_strm_cache()
 
     def get_state(self) -> bool:
         return bool(self._enabled and self._token and self._path_prefixes)
@@ -206,9 +209,13 @@ class OpenListStrmSyncDel(_PluginBase):
         """
         处理源文件删除事件
         """
-        if not self.get_state() or not event:
+        if not event:
             return
         src = self.__safe_get(event.event_data, "src")
+        logger.info(f"{self.plugin_name} 收到事件 DownloadFileDeleted，src={src}")
+        if not self.get_state():
+            logger.warning(f"{self.plugin_name} 状态未就绪，已跳过（请检查启用状态、token、监控路径）")
+            return
         self.__handle_delete_event_path(src, "DownloadFileDeleted")
 
     @eventmanager.register(EventType.PluginAction)
@@ -216,12 +223,16 @@ class OpenListStrmSyncDel(_PluginBase):
         """
         兼容MediaSyncDel发送的删除动作
         """
-        if not self.get_state() or not event:
+        if not event:
             return
         event_data = event.event_data
         if self.__safe_get(event_data, "action") != "networkdisk_del":
             return
         media_path = self.__safe_get(event_data, "media_path")
+        logger.info(f"{self.plugin_name} 收到事件 PluginAction.networkdisk_del，media_path={media_path}")
+        if not self.get_state():
+            logger.warning(f"{self.plugin_name} 状态未就绪，已跳过（请检查启用状态、token、监控路径）")
+            return
         self.__handle_delete_event_path(media_path, "PluginAction.networkdisk_del")
 
     @eventmanager.register(EventType.WebhookMessage)
@@ -229,13 +240,17 @@ class OpenListStrmSyncDel(_PluginBase):
         """
         兼容媒体服务器删除事件
         """
-        if not self.get_state() or not event:
+        if not event:
             return
         event_data = event.event_data
         event_name = str(self.__safe_get(event_data, "event") or "").lower()
         if event_name not in ["library.deleted", "media_del"]:
             return
         media_path = self.__safe_get(event_data, "item_path")
+        logger.info(f"{self.plugin_name} 收到事件 WebhookMessage.{event_name}，item_path={media_path}")
+        if not self.get_state():
+            logger.warning(f"{self.plugin_name} 状态未就绪，已跳过（请检查启用状态、token、监控路径）")
+            return
         self.__handle_delete_event_path(media_path, f"WebhookMessage.{event_name}")
 
     def __handle_delete_event_path(self, raw_path: Optional[str], event_name: str):
@@ -510,6 +525,76 @@ class OpenListStrmSyncDel(_PluginBase):
             if target_path and self._target_cache.get(target_path) == cache_item:
                 self._target_cache.pop(target_path, None)
             self.__persist_cache()
+
+    def __warmup_strm_cache(self):
+        """
+        启动时扫描媒体库中的strm文件，建立“本地strm路径 -> OpenList目标路径”映射。
+        解决历史strm在删除时文件已不存在导致无法解析的问题。
+        """
+        scan_roots = self.__get_library_paths()
+        if not scan_roots:
+            logger.warning(f"{self.plugin_name} 未检测到LIBRARY_PATH，跳过strm预扫描")
+            return
+
+        scanned = 0
+        cached = 0
+        changed = False
+
+        for root in scan_roots:
+            root_path = Path(root)
+            if not root_path.exists() or not root_path.is_dir():
+                continue
+            try:
+                for strm_file in root_path.rglob("*.strm"):
+                    scanned += 1
+                    strm_path = self.__normalize_local_path(strm_file)
+                    if strm_path in self._strm_cache:
+                        continue
+                    content = self.__read_strm_content(strm_file)
+                    if not content:
+                        continue
+                    base_url, target_path = self.__parse_openlist_target(content)
+                    if not base_url or not target_path:
+                        continue
+                    if not self.__in_monitor_paths(target_path):
+                        continue
+                    self.__upsert_cache(
+                        strm_path=strm_path,
+                        content=content,
+                        base_url=base_url,
+                        target_path=target_path
+                    )
+                    cached += 1
+                    changed = True
+            except Exception as err:
+                logger.error(f"{self.plugin_name} 扫描目录失败：{root}，原因：{err}")
+
+        if changed:
+            self.__persist_cache()
+        logger.info(f"{self.plugin_name} strm预扫描完成，扫描 {scanned} 个，新增缓存 {cached} 个")
+
+    @staticmethod
+    def __get_library_paths() -> List[str]:
+        lib_value = getattr(settings, "LIBRARY_PATH", None)
+        if not lib_value:
+            return []
+
+        candidates = []
+        if isinstance(lib_value, (list, tuple, set)):
+            candidates.extend([str(v).strip() for v in lib_value if str(v).strip()])
+        else:
+            raw = str(lib_value)
+            lines = raw.replace(",", "\n").splitlines()
+            candidates.extend([line.strip() for line in lines if line.strip()])
+
+        seen = set()
+        result = []
+        for item in candidates:
+            normalized = item.replace("\\", "/")
+            if normalized not in seen:
+                seen.add(normalized)
+                result.append(item)
+        return result
 
     def __persist_cache(self):
         if len(self._strm_cache) > self._cache_limit:
