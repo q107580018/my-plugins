@@ -3,11 +3,12 @@
     "name": "同步删除strm指向的openlist源文件",
     "description": "当触发strm删除事件时，解析strm内容并删除OpenList中的源文件。",
     "labels": "OpenList,文件整理",
-    "version": "1.1",
+    "version": "1.2",
     "icon": "Alist_B.png",
     "author": "Tony Stark",
     "level": 1,
     "history": {
+      "v1.2": "删除处理收紧为仅处理媒体库strm目录中的.strm删除事件；命中监控源路径后才执行OpenList删除。并优化配置界面文案，明确区分OpenList路径与本地strm目录。",
       "v1.1": "新增插件可填写媒体库strm目录（library_paths），启动预扫描优先使用插件配置，未配置时回退系统LIBRARY_PATH。",
       "v1.0": "首个版本，支持删除事件监听、strm解析与OpenList源文件联动删除。"
     }

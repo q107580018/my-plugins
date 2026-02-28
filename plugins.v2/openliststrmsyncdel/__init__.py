@@ -19,7 +19,7 @@ class OpenListStrmSyncDel(_PluginBase):
     # 插件图标
     plugin_icon = "Alist_B.png"
     # 插件版本
-    plugin_version = "1.1"
+    plugin_version = "1.2"
     # 插件作者
     plugin_author = "Tony Stark"
     # 作者主页
@@ -35,6 +35,7 @@ class OpenListStrmSyncDel(_PluginBase):
     _token = ""
     _monitor_source_paths = ""
     _library_paths = ""
+    _library_path_roots: List[str] = []
     _path_prefixes: List[str] = []
     _strm_cache: Dict[str, Dict[str, Any]] = {}
     _target_cache: Dict[str, Dict[str, Any]] = {}
@@ -51,6 +52,7 @@ class OpenListStrmSyncDel(_PluginBase):
         self._token = ""
         self._monitor_source_paths = ""
         self._library_paths = ""
+        self._library_path_roots = []
         self._path_prefixes = []
         self._recent_deleted = {}
         self._strm_cache = {}
@@ -62,6 +64,7 @@ class OpenListStrmSyncDel(_PluginBase):
             self._monitor_source_paths = config.get("monitor_source_paths") or ""
             self._library_paths = (config.get("library_paths") or config.get("library_path") or "").strip()
             self._path_prefixes = self.__parse_monitor_paths(self._monitor_source_paths)
+            self._library_path_roots = self.__get_library_paths()
 
         self.__load_cache()
         if self._enabled:
@@ -72,7 +75,7 @@ class OpenListStrmSyncDel(_PluginBase):
                 self.__warmup_strm_cache()
 
     def get_state(self) -> bool:
-        return bool(self._enabled and self._token and self._path_prefixes)
+        return bool(self._enabled and self._token and self._path_prefixes and self._library_path_roots)
 
     @staticmethod
     def get_command() -> List[Dict[str, Any]]:
@@ -112,32 +115,12 @@ class OpenListStrmSyncDel(_PluginBase):
                                 "props": {"cols": 12},
                                 "content": [
                                     {
-                                        "component": "VTextarea",
-                                        "props": {
-                                            "model": "library_paths",
-                                            "label": "媒体库strm目录（可选）",
-                                            "rows": 2,
-                                            "placeholder": "/media/videos_strm/115_strm\n/media/videos_strm/aliyun_strm",
-                                        },
-                                    }
-                                ],
-                            }
-                        ],
-                    },
-                    {
-                        "component": "VRow",
-                        "content": [
-                            {
-                                "component": "VCol",
-                                "props": {"cols": 12},
-                                "content": [
-                                    {
                                         "component": "VTextField",
                                         "props": {
                                             "model": "token",
-                                            "label": "OpenList Token",
+                                            "label": "OpenList Token（必填）",
                                             "type": "password",
-                                            "placeholder": "OpenList API Token",
+                                            "placeholder": "OpenList API Token（可填原始Token或Bearer Token）",
                                         },
                                     }
                                 ],
@@ -155,9 +138,33 @@ class OpenListStrmSyncDel(_PluginBase):
                                         "component": "VTextarea",
                                         "props": {
                                             "model": "monitor_source_paths",
-                                            "label": "监控的源文件路径",
+                                            "label": "监控的源文件路径（OpenList路径，必填）",
                                             "rows": 3,
                                             "placeholder": "/115\n/影视库/电影",
+                                            "hint": "一行一个OpenList路径前缀；这里不是本地/media路径。",
+                                            "persistent-hint": True,
+                                        },
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12},
+                                "content": [
+                                    {
+                                        "component": "VTextarea",
+                                        "props": {
+                                            "model": "library_paths",
+                                            "label": "媒体库strm目录（本地路径，必填）",
+                                            "rows": 2,
+                                            "placeholder": "/media/videos_strm/115_strm\n/media/videos_strm/aliyun_strm",
+                                            "hint": "仅这些目录内的.strm删除事件会被处理；可多行填写，留空才回退系统LIBRARY_PATH。",
+                                            "persistent-hint": True,
                                         },
                                     }
                                 ],
@@ -176,9 +183,11 @@ class OpenListStrmSyncDel(_PluginBase):
                                         "props": {
                                             "type": "info",
                                             "variant": "tonal",
-                                            "text": "监听源文件删除和媒体库删除事件；仅当strm里解析出的OpenList路径命中监控路径时才会执行删除。"
-                                                    "媒体库strm已被删除时，会回退使用插件缓存中的strm映射。"
-                                                    "媒体库strm目录可在本插件填写；留空时回退使用系统LIBRARY_PATH。"
+                                            "text": "参数说明："
+                                                    "1) OpenList Token：用于调用OpenList删除接口；"
+                                                    "2) 监控的源文件路径：填写OpenList内路径前缀（如/115），不是本地strm目录；"
+                                                    "3) 媒体库strm目录：填写MoviePilot可访问的本地strm目录（如/media/videos_strm/115_strm）；"
+                                                    "4) 执行删除条件：事件路径属于媒体库strm目录且为.strm文件，并且解析出的OpenList目标路径命中监控路径。"
                                         },
                                     }
                                 ],
@@ -239,7 +248,7 @@ class OpenListStrmSyncDel(_PluginBase):
         src = self.__safe_get(event.event_data, "src")
         logger.info(f"{self.plugin_name} 收到事件 DownloadFileDeleted，src={src}")
         if not self.get_state():
-            logger.warning(f"{self.plugin_name} 状态未就绪，已跳过（请检查启用状态、token、监控路径）")
+            logger.warning(f"{self.plugin_name} 状态未就绪，已跳过（请检查启用状态、token、监控路径、媒体库strm目录）")
             return
         self.__handle_delete_event_path(src, "DownloadFileDeleted")
 
@@ -256,7 +265,7 @@ class OpenListStrmSyncDel(_PluginBase):
         media_path = self.__safe_get(event_data, "media_path")
         logger.info(f"{self.plugin_name} 收到事件 PluginAction.networkdisk_del，media_path={media_path}")
         if not self.get_state():
-            logger.warning(f"{self.plugin_name} 状态未就绪，已跳过（请检查启用状态、token、监控路径）")
+            logger.warning(f"{self.plugin_name} 状态未就绪，已跳过（请检查启用状态、token、监控路径、媒体库strm目录）")
             return
         self.__handle_delete_event_path(media_path, "PluginAction.networkdisk_del")
 
@@ -274,7 +283,7 @@ class OpenListStrmSyncDel(_PluginBase):
         media_path = self.__safe_get(event_data, "item_path")
         logger.info(f"{self.plugin_name} 收到事件 WebhookMessage.{event_name}，item_path={media_path}")
         if not self.get_state():
-            logger.warning(f"{self.plugin_name} 状态未就绪，已跳过（请检查启用状态、token、监控路径）")
+            logger.warning(f"{self.plugin_name} 状态未就绪，已跳过（请检查启用状态、token、监控路径、媒体库strm目录）")
             return
         self.__handle_delete_event_path(media_path, f"WebhookMessage.{event_name}")
 
@@ -285,11 +294,15 @@ class OpenListStrmSyncDel(_PluginBase):
         if not event_path:
             return
 
-        base_url, target_path = None, None
-        if event_path.lower().endswith(".strm"):
-            base_url, target_path = self.__resolve_target_from_strm(event_path)
-        else:
-            base_url, target_path = self.__resolve_target_from_path(event_path)
+        # 仅处理媒体库目录内的strm删除事件
+        if not event_path.lower().endswith(".strm"):
+            logger.debug(f"{self.plugin_name} 跳过事件 {event_name}，非strm文件：{event_path}")
+            return
+        if not self.__is_in_library_paths(event_path):
+            logger.debug(f"{self.plugin_name} 跳过事件 {event_name}，不在媒体库strm目录：{event_path}")
+            return
+
+        base_url, target_path = self.__resolve_target_from_strm(event_path)
 
         if not base_url or not target_path:
             logger.debug(f"{self.plugin_name} 跳过事件 {event_name}，无法解析OpenList目标：{event_path}")
@@ -556,7 +569,7 @@ class OpenListStrmSyncDel(_PluginBase):
         启动时扫描媒体库中的strm文件，建立“本地strm路径 -> OpenList目标路径”映射。
         解决历史strm在删除时文件已不存在导致无法解析的问题。
         """
-        scan_roots = self.__get_library_paths()
+        scan_roots = self._library_path_roots
         if not scan_roots:
             logger.warning(f"{self.plugin_name} 未配置媒体库strm目录（library_paths/LIBRARY_PATH），跳过strm预扫描")
             return
@@ -606,6 +619,18 @@ class OpenListStrmSyncDel(_PluginBase):
         lib_value = getattr(settings, "LIBRARY_PATH", None)
         return self.__parse_local_paths(lib_value)
 
+    def __is_in_library_paths(self, event_path: str) -> bool:
+        if not event_path:
+            return False
+        normalized_event = self.__normalize_local_path(event_path)
+        if not normalized_event:
+            return False
+        normalized_event = normalized_event.rstrip("/") or "/"
+        for root in self._library_path_roots:
+            if normalized_event == root or normalized_event.startswith(f"{root}/"):
+                return True
+        return False
+
     @staticmethod
     def __parse_local_paths(path_value: Any) -> List[str]:
         if not path_value:
@@ -622,9 +647,13 @@ class OpenListStrmSyncDel(_PluginBase):
         result = []
         for item in candidates:
             normalized = item.replace("\\", "/")
+            while "//" in normalized:
+                normalized = normalized.replace("//", "/")
+            if len(normalized) > 1 and normalized.endswith("/"):
+                normalized = normalized.rstrip("/")
             if normalized not in seen:
                 seen.add(normalized)
-                result.append(item)
+                result.append(normalized)
         return result
 
     def __persist_cache(self):
