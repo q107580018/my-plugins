@@ -19,7 +19,7 @@ class OpenListStrmSyncDel(_PluginBase):
     # 插件图标
     plugin_icon = "Alist_B.png"
     # 插件版本
-    plugin_version = "1.0"
+    plugin_version = "1.1"
     # 插件作者
     plugin_author = "Tony Stark"
     # 作者主页
@@ -34,6 +34,7 @@ class OpenListStrmSyncDel(_PluginBase):
     _enabled = False
     _token = ""
     _monitor_source_paths = ""
+    _library_paths = ""
     _path_prefixes: List[str] = []
     _strm_cache: Dict[str, Dict[str, Any]] = {}
     _target_cache: Dict[str, Dict[str, Any]] = {}
@@ -49,6 +50,7 @@ class OpenListStrmSyncDel(_PluginBase):
         self._enabled = False
         self._token = ""
         self._monitor_source_paths = ""
+        self._library_paths = ""
         self._path_prefixes = []
         self._recent_deleted = {}
         self._strm_cache = {}
@@ -58,6 +60,7 @@ class OpenListStrmSyncDel(_PluginBase):
             self._enabled = config.get("enabled", False)
             self._token = (config.get("token") or "").strip()
             self._monitor_source_paths = config.get("monitor_source_paths") or ""
+            self._library_paths = (config.get("library_paths") or config.get("library_path") or "").strip()
             self._path_prefixes = self.__parse_monitor_paths(self._monitor_source_paths)
 
         self.__load_cache()
@@ -95,6 +98,26 @@ class OpenListStrmSyncDel(_PluginBase):
                                         "props": {
                                             "model": "enabled",
                                             "label": "启用插件",
+                                        },
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12},
+                                "content": [
+                                    {
+                                        "component": "VTextarea",
+                                        "props": {
+                                            "model": "library_paths",
+                                            "label": "媒体库strm目录（可选）",
+                                            "rows": 2,
+                                            "placeholder": "/media/videos_strm/115_strm\n/media/videos_strm/aliyun_strm",
                                         },
                                     }
                                 ],
@@ -155,6 +178,7 @@ class OpenListStrmSyncDel(_PluginBase):
                                             "variant": "tonal",
                                             "text": "监听源文件删除和媒体库删除事件；仅当strm里解析出的OpenList路径命中监控路径时才会执行删除。"
                                                     "媒体库strm已被删除时，会回退使用插件缓存中的strm映射。"
+                                                    "媒体库strm目录可在本插件填写；留空时回退使用系统LIBRARY_PATH。"
                                         },
                                     }
                                 ],
@@ -167,6 +191,7 @@ class OpenListStrmSyncDel(_PluginBase):
             "enabled": False,
             "token": "",
             "monitor_source_paths": "",
+            "library_paths": "",
         }
 
     def get_page(self) -> List[dict]:
@@ -533,7 +558,7 @@ class OpenListStrmSyncDel(_PluginBase):
         """
         scan_roots = self.__get_library_paths()
         if not scan_roots:
-            logger.warning(f"{self.plugin_name} 未检测到LIBRARY_PATH，跳过strm预扫描")
+            logger.warning(f"{self.plugin_name} 未配置媒体库strm目录（library_paths/LIBRARY_PATH），跳过strm预扫描")
             return
 
         scanned = 0
@@ -573,17 +598,23 @@ class OpenListStrmSyncDel(_PluginBase):
             self.__persist_cache()
         logger.info(f"{self.plugin_name} strm预扫描完成，扫描 {scanned} 个，新增缓存 {cached} 个")
 
-    @staticmethod
-    def __get_library_paths() -> List[str]:
-        lib_value = getattr(settings, "LIBRARY_PATH", None)
-        if not lib_value:
-            return []
+    def __get_library_paths(self) -> List[str]:
+        custom_paths = self.__parse_local_paths(self._library_paths)
+        if custom_paths:
+            return custom_paths
 
+        lib_value = getattr(settings, "LIBRARY_PATH", None)
+        return self.__parse_local_paths(lib_value)
+
+    @staticmethod
+    def __parse_local_paths(path_value: Any) -> List[str]:
+        if not path_value:
+            return []
         candidates = []
-        if isinstance(lib_value, (list, tuple, set)):
-            candidates.extend([str(v).strip() for v in lib_value if str(v).strip()])
+        if isinstance(path_value, (list, tuple, set)):
+            candidates.extend([str(v).strip() for v in path_value if str(v).strip()])
         else:
-            raw = str(lib_value)
+            raw = str(path_value)
             lines = raw.replace(",", "\n").splitlines()
             candidates.extend([line.strip() for line in lines if line.strip()])
 
