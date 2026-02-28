@@ -1,0 +1,14 @@
+{
+  "OpenListStrmSyncDel": {
+    "name": "同步删除strm指向的openlist源文件",
+    "description": "当触发strm删除事件时，解析strm内容并删除OpenList中的源文件。",
+    "labels": "OpenList,文件整理",
+    "version": "1.0",
+    "icon": "Alist_B.png",
+    "author": "Tony Stark",
+    "level": 1,
+    "history": {
+      "v1.0": "首个版本，支持删除事件监听、strm解析与OpenList源文件联动删除。"
+    }
+  }
+}

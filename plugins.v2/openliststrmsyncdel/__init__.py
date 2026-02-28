@@ -1,0 +1,653 @@
+import time
+from pathlib import Path, PurePosixPath
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import parse_qs, unquote, urlparse
+
+from app.core.event import Event, eventmanager
+from app.log import logger
+from app.plugins import _PluginBase
+from app.schemas.types import EventType
+from app.utils.http import RequestUtils
+
+
+class OpenListStrmSyncDel(_PluginBase):
+    # 插件名称
+    plugin_name = "同步删除strm指向的openlist源文件"
+    # 插件描述
+    plugin_desc = "监听strm删除事件，解析strm内容并删除OpenList中的源文件。"
+    # 插件图标
+    plugin_icon = "Alist_B.png"
+    # 插件版本
+    plugin_version = "1.0"
+    # 插件作者
+    plugin_author = "Tony Stark"
+    # 作者主页
+    author_url = "https://github.com"
+    # 插件配置项ID前缀
+    plugin_config_prefix = "openliststrmsyncdel_"
+    # 加载顺序
+    plugin_order = 25
+    # 可使用的用户级别
+    auth_level = 1
+
+    _enabled = False
+    _token = ""
+    _monitor_source_paths = ""
+    _path_prefixes: List[str] = []
+    _strm_cache: Dict[str, Dict[str, Any]] = {}
+    _target_cache: Dict[str, Dict[str, Any]] = {}
+    _recent_deleted: Dict[str, float] = {}
+
+    _cache_key = "strm_content_map"
+    _cache_limit = 3000
+    _history_key = "history"
+    _history_limit = 200
+    _recent_ttl_seconds = 300
+
+    def init_plugin(self, config: dict = None):
+        self._enabled = False
+        self._token = ""
+        self._monitor_source_paths = ""
+        self._path_prefixes = []
+        self._recent_deleted = {}
+        self._strm_cache = {}
+        self._target_cache = {}
+
+        if config:
+            self._enabled = config.get("enabled", False)
+            self._token = (config.get("token") or "").strip()
+            self._monitor_source_paths = config.get("monitor_source_paths") or ""
+            self._path_prefixes = self.__parse_monitor_paths(self._monitor_source_paths)
+
+        self.__load_cache()
+        if self._enabled:
+            logger.info(
+                f"{self.plugin_name} 已启用，监控源文件路径前缀：{self._path_prefixes if self._path_prefixes else '未配置'}"
+            )
+
+    def get_state(self) -> bool:
+        return bool(self._enabled and self._token and self._path_prefixes)
+
+    @staticmethod
+    def get_command() -> List[Dict[str, Any]]:
+        pass
+
+    def get_api(self) -> List[Dict[str, Any]]:
+        pass
+
+    def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
+        return [
+            {
+                "component": "VForm",
+                "content": [
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 4},
+                                "content": [
+                                    {
+                                        "component": "VSwitch",
+                                        "props": {
+                                            "model": "enabled",
+                                            "label": "启用插件",
+                                        },
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12},
+                                "content": [
+                                    {
+                                        "component": "VTextField",
+                                        "props": {
+                                            "model": "token",
+                                            "label": "OpenList Token",
+                                            "type": "password",
+                                            "placeholder": "OpenList API Token",
+                                        },
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12},
+                                "content": [
+                                    {
+                                        "component": "VTextarea",
+                                        "props": {
+                                            "model": "monitor_source_paths",
+                                            "label": "监控的源文件路径",
+                                            "rows": 3,
+                                            "placeholder": "/115\n/影视库/电影",
+                                        },
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12},
+                                "content": [
+                                    {
+                                        "component": "VAlert",
+                                        "props": {
+                                            "type": "info",
+                                            "variant": "tonal",
+                                            "text": "监听源文件删除和媒体库删除事件；仅当strm里解析出的OpenList路径命中监控路径时才会执行删除。"
+                                                    "媒体库strm已被删除时，会回退使用插件缓存中的strm映射。"
+                                        },
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                ],
+            }
+        ], {
+            "enabled": False,
+            "token": "",
+            "monitor_source_paths": "",
+        }
+
+    def get_page(self) -> List[dict]:
+        pass
+
+    def stop_service(self):
+        self._recent_deleted = {}
+
+    @eventmanager.register(EventType.TransferComplete)
+    def cache_strm_content(self, event: Event):
+        """
+        入库后缓存strm内容，保证后续删除事件触发时即使strm文件已被删除也可回溯。
+        """
+        if not self._enabled or not event or not event.event_data:
+            return
+        transfer_info = self.__safe_get(event.event_data, "transferinfo")
+        file_list = self.__safe_get(transfer_info, "file_list_new")
+        if not file_list:
+            return
+
+        changed = False
+        for file_path in file_list:
+            strm_path = self.__normalize_local_path(file_path)
+            if not strm_path or not strm_path.lower().endswith(".strm"):
+                continue
+            content = self.__read_strm_content(Path(strm_path))
+            if not content:
+                continue
+            base_url, target_path = self.__parse_openlist_target(content)
+            if not base_url or not target_path:
+                continue
+            self.__upsert_cache(strm_path=strm_path, content=content, base_url=base_url, target_path=target_path)
+            changed = True
+
+        if changed:
+            self.__persist_cache()
+
+    @eventmanager.register(EventType.DownloadFileDeleted)
+    def on_download_file_deleted(self, event: Event):
+        """
+        处理源文件删除事件
+        """
+        if not self.get_state() or not event:
+            return
+        src = self.__safe_get(event.event_data, "src")
+        self.__handle_delete_event_path(src, "DownloadFileDeleted")
+
+    @eventmanager.register(EventType.PluginAction)
+    def on_plugin_action(self, event: Event):
+        """
+        兼容MediaSyncDel发送的删除动作
+        """
+        if not self.get_state() or not event:
+            return
+        event_data = event.event_data
+        if self.__safe_get(event_data, "action") != "networkdisk_del":
+            return
+        media_path = self.__safe_get(event_data, "media_path")
+        self.__handle_delete_event_path(media_path, "PluginAction.networkdisk_del")
+
+    @eventmanager.register(EventType.WebhookMessage)
+    def on_webhook_message(self, event: Event):
+        """
+        兼容媒体服务器删除事件
+        """
+        if not self.get_state() or not event:
+            return
+        event_data = event.event_data
+        event_name = str(self.__safe_get(event_data, "event") or "").lower()
+        if event_name not in ["library.deleted", "media_del"]:
+            return
+        media_path = self.__safe_get(event_data, "item_path")
+        self.__handle_delete_event_path(media_path, f"WebhookMessage.{event_name}")
+
+    def __handle_delete_event_path(self, raw_path: Optional[str], event_name: str):
+        if not raw_path:
+            return
+        event_path = self.__normalize_local_path(raw_path)
+        if not event_path:
+            return
+
+        base_url, target_path = None, None
+        if event_path.lower().endswith(".strm"):
+            base_url, target_path = self.__resolve_target_from_strm(event_path)
+        else:
+            base_url, target_path = self.__resolve_target_from_path(event_path)
+
+        if not base_url or not target_path:
+            logger.debug(f"{self.plugin_name} 跳过事件 {event_name}，无法解析OpenList目标：{event_path}")
+            return
+        if not self.__in_monitor_paths(target_path):
+            logger.debug(f"{self.plugin_name} 跳过未命中监控路径的文件：{target_path}")
+            return
+        if self.__is_recently_deleted(target_path):
+            logger.debug(f"{self.plugin_name} 跳过短时间重复删除：{target_path}")
+            return
+
+        if self.__remove_openlist_file(base_url=base_url, target_path=target_path):
+            logger.info(f"{self.plugin_name} 删除成功：{target_path}（事件：{event_name}）")
+            self.__cleanup_empty_parent_dirs(base_url=base_url, file_path=target_path)
+            self._recent_deleted[target_path] = time.time()
+            self.__save_history(event_name=event_name, event_path=event_path, target_path=target_path, base_url=base_url)
+            if event_path.lower().endswith(".strm"):
+                self.__remove_cache_by_strm_path(event_path)
+        else:
+            logger.error(f"{self.plugin_name} 删除失败：{target_path}（事件：{event_name}）")
+
+    def __resolve_target_from_strm(self, strm_path: str) -> Tuple[Optional[str], Optional[str]]:
+        content = self.__read_strm_content(Path(strm_path))
+        base_url, target_path = self.__parse_openlist_target(content or "")
+        if not base_url and target_path:
+            base_url = self.__latest_base_url()
+
+        if base_url and target_path and content:
+            self.__upsert_cache(strm_path=strm_path, content=content, base_url=base_url, target_path=target_path)
+            self.__persist_cache()
+            return base_url, target_path
+
+        cache_item = self._strm_cache.get(strm_path)
+        if cache_item:
+            base_url = cache_item.get("base_url")
+            target_path = cache_item.get("target_path")
+            if base_url and target_path:
+                return base_url, target_path
+        return None, None
+
+    def __resolve_target_from_path(self, path_value: str) -> Tuple[Optional[str], Optional[str]]:
+        # 兼容事件直接给出URL
+        base_url, target_path = self.__parse_openlist_target(path_value)
+        if base_url and target_path:
+            return base_url, target_path
+
+        target_path = self.__normalize_openlist_path(path_value)
+        if not target_path:
+            return None, None
+
+        cache_item = self._target_cache.get(target_path)
+        if cache_item and cache_item.get("base_url"):
+            return cache_item.get("base_url"), target_path
+
+        # 若事件给出的就是源文件路径，且已缓存过base_url，则按最近一次base_url处理
+        latest_base_url = self.__latest_base_url()
+        if latest_base_url and self.__in_monitor_paths(target_path):
+            logger.warn(f"{self.plugin_name} 未能从事件路径确定OpenList地址，使用最近一次地址：{latest_base_url}")
+            return latest_base_url, target_path
+
+        return None, None
+
+    def __remove_openlist_file(self, base_url: str, target_path: str) -> bool:
+        return self.__remove_openlist_item(base_url=base_url, item_path=target_path, not_found_as_success=True)
+
+    def __cleanup_empty_parent_dirs(self, base_url: str, file_path: str):
+        monitor_root = self.__get_monitor_root_for_target(file_path)
+        if not monitor_root:
+            return
+
+        current_dir = self.__normalize_openlist_path(str(PurePosixPath(file_path).parent))
+        while current_dir and current_dir != "/" and current_dir != monitor_root:
+            if not current_dir.startswith(f"{monitor_root}/"):
+                break
+            # 如果配置的是根目录监控，保护一级目录，避免误删 /115 这类入口目录
+            if monitor_root == "/" and self.__path_depth(current_dir) <= 1:
+                break
+
+            if not self.__is_openlist_dir_empty(base_url=base_url, dir_path=current_dir):
+                break
+
+            if not self.__remove_openlist_item(base_url=base_url, item_path=current_dir, not_found_as_success=True):
+                logger.warning(f"{self.plugin_name} 空目录删除失败，停止向上清理：{current_dir}")
+                break
+
+            logger.info(f"{self.plugin_name} 已删除空目录：{current_dir}")
+            parent_dir = self.__normalize_openlist_path(str(PurePosixPath(current_dir).parent))
+            if parent_dir == current_dir:
+                break
+            current_dir = parent_dir
+
+    def __is_openlist_dir_empty(self, base_url: str, dir_path: str) -> bool:
+        payload = {
+            "path": dir_path,
+            "password": "",
+            "page": 1,
+            "per_page": 1,
+            "refresh": False
+        }
+        response = self.__openlist_post(base_url=base_url, api_path="/api/fs/list", payload=payload)
+        if not response:
+            logger.warning(f"{self.plugin_name} 无法查询目录内容，跳过目录删除：{dir_path}")
+            return False
+
+        if not response.ok:
+            logger.warning(f"{self.plugin_name} 查询目录失败，跳过目录删除：{dir_path}，HTTP {response.status_code}")
+            return False
+
+        try:
+            body = response.json() or {}
+        except Exception:
+            logger.warning(f"{self.plugin_name} 查询目录返回非JSON，跳过目录删除：{dir_path}")
+            return False
+
+        code = body.get("code")
+        if code not in [None, 0, 200]:
+            msg = str(body.get("message") or body.get("msg") or "").strip()
+            logger.warning(f"{self.plugin_name} 查询目录返回异常 code={code} msg={msg}，跳过目录删除：{dir_path}")
+            return False
+
+        data = body.get("data")
+        if isinstance(data, dict):
+            for key in ["content", "files", "items"]:
+                value = data.get(key)
+                if isinstance(value, list):
+                    return len(value) == 0
+            for key in ["total", "count", "obj_count"]:
+                value = data.get(key)
+                if isinstance(value, int):
+                    return value == 0
+                if isinstance(value, str) and value.isdigit():
+                    return int(value) == 0
+            # 未识别到明确字段时，为安全起见按非空处理
+            return False
+        if isinstance(data, list):
+            return len(data) == 0
+        return False
+
+    def __remove_openlist_item(self, base_url: str, item_path: str, not_found_as_success: bool = False) -> bool:
+        item_path = self.__normalize_openlist_path(item_path)
+        if not item_path or item_path == "/":
+            return False
+
+        posix_path = PurePosixPath(item_path)
+        item_name = posix_path.name
+        if not item_name:
+            return False
+        dir_path = self.__normalize_openlist_path(str(posix_path.parent)) or "/"
+
+        payload = {
+            "dir": dir_path,
+            "names": [item_name]
+        }
+        response = self.__openlist_post(base_url=base_url, api_path="/api/fs/remove", payload=payload)
+        if not response:
+            return False
+        if not response.ok:
+            logger.error(f"{self.plugin_name} OpenList请求失败：HTTP {response.status_code} - {response.text}")
+            return False
+
+        try:
+            body = response.json() or {}
+        except Exception:
+            body = {}
+
+        code = body.get("code")
+        msg = str(body.get("message") or body.get("msg") or "").strip()
+        if code not in [None, 0, 200]:
+            if not_found_as_success and "not found" in msg.lower():
+                logger.warn(f"{self.plugin_name} 目标不存在，视为成功：{item_path}")
+                return True
+            logger.error(f"{self.plugin_name} OpenList返回异常 code={code} msg={msg}")
+            return False
+        return True
+
+    def __openlist_post(self, base_url: str, api_path: str, payload: dict):
+        url = f"{base_url.rstrip('/')}{api_path}"
+        headers = {
+            "Authorization": self._token,
+            "Content-Type": "application/json"
+        }
+        response = RequestUtils(headers=headers).post_res(url, json=payload)
+        if (not response or not response.ok) and self._token and not self._token.lower().startswith("bearer "):
+            headers["Authorization"] = f"Bearer {self._token}"
+            response = RequestUtils(headers=headers).post_res(url, json=payload)
+        return response
+
+    def __get_monitor_root_for_target(self, target_path: str) -> Optional[str]:
+        target_path = self.__normalize_openlist_path(target_path)
+        if not target_path:
+            return None
+        candidates = []
+        for prefix in self._path_prefixes:
+            if prefix == "/" or target_path == prefix or target_path.startswith(f"{prefix}/"):
+                candidates.append(prefix)
+        if not candidates:
+            return None
+        return max(candidates, key=len)
+
+    @staticmethod
+    def __path_depth(path_value: str) -> int:
+        path_value = str(path_value or "")
+        if not path_value or path_value == "/":
+            return 0
+        return len([part for part in path_value.split("/") if part])
+
+    def __load_cache(self):
+        cache_data = self.get_data(self._cache_key)
+        if not isinstance(cache_data, dict):
+            return
+
+        for strm_path, item in cache_data.items():
+            if not strm_path:
+                continue
+            strm_path = self.__normalize_local_path(strm_path)
+
+            if isinstance(item, dict):
+                content = (item.get("content") or "").strip()
+                base_url = (item.get("base_url") or "").strip()
+                target_path = self.__normalize_openlist_path(item.get("target_path") or "")
+                ts = int(item.get("ts") or time.time())
+            else:
+                content = str(item).strip()
+                base_url, target_path = self.__parse_openlist_target(content)
+                ts = int(time.time())
+
+            if not content or not base_url or not target_path:
+                continue
+
+            cache_item = {
+                "content": content,
+                "base_url": base_url,
+                "target_path": target_path,
+                "ts": ts
+            }
+            self._strm_cache[strm_path] = cache_item
+            self._target_cache[target_path] = cache_item
+
+    def __upsert_cache(self, strm_path: str, content: str, base_url: str, target_path: str):
+        strm_path = self.__normalize_local_path(strm_path)
+        target_path = self.__normalize_openlist_path(target_path)
+        if not strm_path or not base_url or not target_path:
+            return
+
+        cache_item = {
+            "content": content.strip(),
+            "base_url": base_url.strip(),
+            "target_path": target_path,
+            "ts": int(time.time())
+        }
+        self._strm_cache[strm_path] = cache_item
+        self._target_cache[target_path] = cache_item
+
+    def __remove_cache_by_strm_path(self, strm_path: str):
+        cache_item = self._strm_cache.pop(strm_path, None)
+        if cache_item:
+            target_path = cache_item.get("target_path")
+            if target_path and self._target_cache.get(target_path) == cache_item:
+                self._target_cache.pop(target_path, None)
+            self.__persist_cache()
+
+    def __persist_cache(self):
+        if len(self._strm_cache) > self._cache_limit:
+            keep_items = sorted(
+                self._strm_cache.items(),
+                key=lambda item: item[1].get("ts", 0),
+                reverse=True
+            )[:self._cache_limit]
+            self._strm_cache = dict(keep_items)
+            self._target_cache = {
+                item.get("target_path"): item
+                for item in self._strm_cache.values()
+                if item.get("target_path")
+            }
+        self.save_data(self._cache_key, self._strm_cache)
+
+    def __save_history(self, event_name: str, event_path: str, target_path: str, base_url: str):
+        history = self.get_data(self._history_key) or []
+        history.insert(0, {
+            "event": event_name,
+            "event_path": event_path,
+            "target_path": target_path,
+            "openlist_url": base_url,
+            "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        })
+        self.save_data(self._history_key, history[:self._history_limit])
+
+    def __latest_base_url(self) -> Optional[str]:
+        latest_item = None
+        for item in self._strm_cache.values():
+            if not item.get("base_url"):
+                continue
+            if not latest_item or item.get("ts", 0) > latest_item.get("ts", 0):
+                latest_item = item
+        return latest_item.get("base_url") if latest_item else None
+
+    def __is_recently_deleted(self, target_path: str) -> bool:
+        now = time.time()
+        to_remove = []
+        for cached_path, ts in self._recent_deleted.items():
+            if now - ts >= self._recent_ttl_seconds:
+                to_remove.append(cached_path)
+        for cached_path in to_remove:
+            self._recent_deleted.pop(cached_path, None)
+
+        last_ts = self._recent_deleted.get(target_path)
+        return bool(last_ts and now - last_ts < self._recent_ttl_seconds)
+
+    def __in_monitor_paths(self, target_path: str) -> bool:
+        if not target_path or not self._path_prefixes:
+            return False
+        for prefix in self._path_prefixes:
+            if prefix == "/":
+                return True
+            if target_path == prefix or target_path.startswith(f"{prefix}/"):
+                return True
+        return False
+
+    def __parse_monitor_paths(self, raw_text: str) -> List[str]:
+        result = []
+        for line in str(raw_text or "").splitlines():
+            value = line.strip()
+            if not value:
+                continue
+            _, path = self.__parse_openlist_target(value)
+            if path and path not in result:
+                result.append(path)
+        return result
+
+    @staticmethod
+    def __safe_get(data: Any, key: str, default: Any = None) -> Any:
+        if not data:
+            return default
+        if isinstance(data, dict):
+            return data.get(key, default)
+        return getattr(data, key, default)
+
+    @staticmethod
+    def __normalize_local_path(path_value: Any) -> str:
+        return str(path_value or "").strip().replace("\\", "/")
+
+    @staticmethod
+    def __normalize_openlist_path(path_value: Any) -> Optional[str]:
+        path = str(path_value or "").strip().replace("\\", "/")
+        if not path:
+            return None
+        while "//" in path:
+            path = path.replace("//", "/")
+        if not path.startswith("/"):
+            path = f"/{path}"
+        if len(path) > 1 and path.endswith("/"):
+            path = path.rstrip("/")
+        return path
+
+    @staticmethod
+    def __read_strm_content(strm_file: Path) -> Optional[str]:
+        try:
+            if not strm_file.exists() or not strm_file.is_file():
+                return None
+            content = strm_file.read_text(encoding="utf-8-sig", errors="ignore")
+            for line in content.splitlines():
+                line = line.strip()
+                if line:
+                    return line
+            return None
+        except Exception as err:
+            logger.error(f"读取strm文件失败：{strm_file}，原因：{err}")
+            return None
+
+    def __parse_openlist_target(self, raw_text: str) -> Tuple[Optional[str], Optional[str]]:
+        value = str(raw_text or "").strip()
+        if not value:
+            return None, None
+
+        if value.startswith("http://") or value.startswith("https://"):
+            parsed = urlparse(value)
+            if not parsed.scheme or not parsed.netloc:
+                return None, None
+            base_url = f"{parsed.scheme}://{parsed.netloc}"
+            target_path = self.__extract_openlist_path(parsed)
+            return base_url, target_path
+
+        target_path = self.__normalize_openlist_path(value)
+        return None, target_path
+
+    def __extract_openlist_path(self, parsed_url) -> Optional[str]:
+        query_map = parse_qs(parsed_url.query or "")
+        for key in ["path", "file", "target", "src"]:
+            value = query_map.get(key)
+            if value and value[0]:
+                return self.__normalize_openlist_path(unquote(value[0]))
+
+        path = unquote(parsed_url.path or "")
+        if not path:
+            return None
+        for prefix in ["/d", "/dav", "/p"]:
+            if path == prefix or path == f"{prefix}/":
+                return "/"
+            if path.startswith(f"{prefix}/"):
+                return self.__normalize_openlist_path(path[len(prefix):])
+        return self.__normalize_openlist_path(path)
