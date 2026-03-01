@@ -23,7 +23,7 @@ class OpenListStrmSyncDel(_PluginBase):
     # 插件作者
     plugin_author = "Tony Stark"
     # 作者主页
-    author_url = "https://github.com"
+    author_url = "https://github.com/q107580018"
     # 插件配置项ID前缀
     plugin_config_prefix = "openliststrmsyncdel_"
     # 加载顺序
