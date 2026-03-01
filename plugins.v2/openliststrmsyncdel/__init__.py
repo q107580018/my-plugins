@@ -19,7 +19,7 @@ class OpenListStrmSyncDel(_PluginBase):
     # 插件图标
     plugin_icon = "Alist_B.png"
     # 插件版本
-    plugin_version = "1.3"
+    plugin_version = "1.4"
     # 插件作者
     plugin_author = "Tony Stark"
     # 作者主页
@@ -72,7 +72,7 @@ class OpenListStrmSyncDel(_PluginBase):
                 f"已启用，监控源文件路径前缀：{self._path_prefixes if self._path_prefixes else '未配置'}"
             )
             logger.info(
-                f"已启用，媒体库strm目录：{self._library_path_roots if self._library_path_roots else '未配置'}"
+                f"已启用，strm资源目录：{self._library_path_roots if self._library_path_roots else '未配置'}"
             )
             if self.get_state():
                 self.__warmup_strm_cache()
@@ -163,7 +163,7 @@ class OpenListStrmSyncDel(_PluginBase):
                                         "component": "VTextarea",
                                         "props": {
                                             "model": "library_paths",
-                                            "label": "媒体库strm目录（本地路径，必填）",
+                                            "label": "strm资源目录（本地路径，必填）",
                                             "rows": 2,
                                             "placeholder": "/media/videos_strm/115_strm\n/media/videos_strm/aliyun_strm",
                                             "hint": "仅这些目录内的.strm删除事件会被处理；可多行填写，留空才回退系统LIBRARY_PATH。",
@@ -189,8 +189,8 @@ class OpenListStrmSyncDel(_PluginBase):
                                             "text": "参数说明："
                                                     "1) OpenList Token：用于调用OpenList删除接口；"
                                                     "2) 监控的源文件路径：填写OpenList内路径前缀（如/115），不是本地strm目录；"
-                                                    "3) 媒体库strm目录：填写MoviePilot可访问的本地strm目录（如/media/videos_strm/115_strm）；"
-                                                    "4) 执行删除条件：事件路径属于媒体库strm目录且为.strm文件，并且解析出的OpenList目标路径命中监控路径。"
+                                                    "3) strm资源目录：填写MoviePilot可访问的本地strm目录（如/media/videos_strm/115_strm）；"
+                                                    "4) 执行删除条件：事件路径属于strm资源目录且为.strm文件，并且解析出的OpenList目标路径命中监控路径。"
                                         },
                                     }
                                 ],
@@ -251,7 +251,7 @@ class OpenListStrmSyncDel(_PluginBase):
         src = self.__safe_get(event.event_data, "src")
         logger.info(f"收到事件 DownloadFileDeleted，src={src}")
         if not self.get_state():
-            logger.warning(f"状态未就绪，已跳过（请检查启用状态、token、监控路径、媒体库strm目录）")
+            logger.warning(f"状态未就绪，已跳过（请检查启用状态、token、监控路径、strm资源目录）")
             return
         self.__handle_delete_event_path(src, "DownloadFileDeleted")
 
@@ -268,7 +268,7 @@ class OpenListStrmSyncDel(_PluginBase):
         media_path = self.__safe_get(event_data, "media_path")
         logger.info(f"收到事件 PluginAction.networkdisk_del，media_path={media_path}")
         if not self.get_state():
-            logger.warning(f"状态未就绪，已跳过（请检查启用状态、token、监控路径、媒体库strm目录）")
+            logger.warning(f"状态未就绪，已跳过（请检查启用状态、token、监控路径、strm资源目录）")
             return
         self.__handle_delete_event_path(media_path, "PluginAction.networkdisk_del")
 
@@ -286,7 +286,7 @@ class OpenListStrmSyncDel(_PluginBase):
         media_path = self.__safe_get(event_data, "item_path")
         logger.info(f"收到事件 WebhookMessage.{event_name}，item_path={media_path}")
         if not self.get_state():
-            logger.warning(f"状态未就绪，已跳过（请检查启用状态、token、监控路径、媒体库strm目录）")
+            logger.warning(f"状态未就绪，已跳过（请检查启用状态、token、监控路径、strm资源目录）")
             return
         self.__handle_delete_event_path(media_path, f"WebhookMessage.{event_name}")
 
@@ -302,7 +302,7 @@ class OpenListStrmSyncDel(_PluginBase):
             logger.debug(f"跳过事件 {event_name}，非strm文件：{event_path}")
             return
         if not self.__is_in_library_paths(event_path):
-            logger.debug(f"跳过事件 {event_name}，不在媒体库strm目录：{event_path}")
+            logger.debug(f"跳过事件 {event_name}，不在strm资源目录：{event_path}")
             return
 
         base_url, target_path = self.__resolve_target_from_strm(event_path)
@@ -574,7 +574,7 @@ class OpenListStrmSyncDel(_PluginBase):
         """
         scan_roots = self._library_path_roots
         if not scan_roots:
-            logger.warning(f"未配置媒体库strm目录（library_paths/LIBRARY_PATH），跳过strm预扫描")
+            logger.warning(f"未配置strm资源目录（library_paths/LIBRARY_PATH），跳过strm预扫描")
             return
         logger.info(f"strm预扫描开始，目录：{scan_roots}")
 

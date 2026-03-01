@@ -24,7 +24,7 @@ https://github.com/q107580018/my-plugins
 
 ### OpenListStrmSyncDel
 
-- 仅处理“媒体库 strm 目录”内的 `.strm` 删除事件。
+- 仅处理“strm资源目录”内的 `.strm` 删除事件。
 - 从 `.strm` 内容解析 OpenList 目标路径。
 - 仅当目标路径命中“监控的源文件路径（OpenList 路径）”时，执行删除。
 - 删除文件后会向上清理空目录（带保护逻辑，避免误删入口目录）。
@@ -34,7 +34,7 @@ https://github.com/q107580018/my-plugins
 
 - `OpenList Token`：OpenList 接口鉴权。
 - `监控的源文件路径`：填写 OpenList 路径前缀（如 `/115`、`/quark/videos`），不是本地 `/media/...`。
-- `媒体库strm目录`：填写本地 `.strm` 存放目录（如 `/media/videos_strm/115_strm`）。
+- `strm资源目录`：填写本地 `.strm` 存放目录（如 `/media/videos_strm/115_strm`）。
 - 多个路径支持换行、英文逗号、中文逗号、分号分隔。
 
 ## 仓库结构
