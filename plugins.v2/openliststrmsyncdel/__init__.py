@@ -19,7 +19,7 @@ class OpenListStrmSyncDel(_PluginBase):
     # 插件图标
     plugin_icon = "Alist_B.png"
     # 插件版本
-    plugin_version = "1.2"
+    plugin_version = "1.3"
     # 插件作者
     plugin_author = "Tony Stark"
     # 作者主页
@@ -64,12 +64,15 @@ class OpenListStrmSyncDel(_PluginBase):
             self._monitor_source_paths = config.get("monitor_source_paths") or ""
             self._library_paths = (config.get("library_paths") or config.get("library_path") or "").strip()
             self._path_prefixes = self.__parse_monitor_paths(self._monitor_source_paths)
-            self._library_path_roots = self.__get_library_paths()
+        self._library_path_roots = self.__get_library_paths()
 
         self.__load_cache()
         if self._enabled:
             logger.info(
-                f"{self.plugin_name} 已启用，监控源文件路径前缀：{self._path_prefixes if self._path_prefixes else '未配置'}"
+                f"已启用，监控源文件路径前缀：{self._path_prefixes if self._path_prefixes else '未配置'}"
+            )
+            logger.info(
+                f"已启用，媒体库strm目录：{self._library_path_roots if self._library_path_roots else '未配置'}"
             )
             if self.get_state():
                 self.__warmup_strm_cache()
@@ -246,9 +249,9 @@ class OpenListStrmSyncDel(_PluginBase):
         if not event:
             return
         src = self.__safe_get(event.event_data, "src")
-        logger.info(f"{self.plugin_name} 收到事件 DownloadFileDeleted，src={src}")
+        logger.info(f"收到事件 DownloadFileDeleted，src={src}")
         if not self.get_state():
-            logger.warning(f"{self.plugin_name} 状态未就绪，已跳过（请检查启用状态、token、监控路径、媒体库strm目录）")
+            logger.warning(f"状态未就绪，已跳过（请检查启用状态、token、监控路径、媒体库strm目录）")
             return
         self.__handle_delete_event_path(src, "DownloadFileDeleted")
 
@@ -263,9 +266,9 @@ class OpenListStrmSyncDel(_PluginBase):
         if self.__safe_get(event_data, "action") != "networkdisk_del":
             return
         media_path = self.__safe_get(event_data, "media_path")
-        logger.info(f"{self.plugin_name} 收到事件 PluginAction.networkdisk_del，media_path={media_path}")
+        logger.info(f"收到事件 PluginAction.networkdisk_del，media_path={media_path}")
         if not self.get_state():
-            logger.warning(f"{self.plugin_name} 状态未就绪，已跳过（请检查启用状态、token、监控路径、媒体库strm目录）")
+            logger.warning(f"状态未就绪，已跳过（请检查启用状态、token、监控路径、媒体库strm目录）")
             return
         self.__handle_delete_event_path(media_path, "PluginAction.networkdisk_del")
 
@@ -281,9 +284,9 @@ class OpenListStrmSyncDel(_PluginBase):
         if event_name not in ["library.deleted", "media_del"]:
             return
         media_path = self.__safe_get(event_data, "item_path")
-        logger.info(f"{self.plugin_name} 收到事件 WebhookMessage.{event_name}，item_path={media_path}")
+        logger.info(f"收到事件 WebhookMessage.{event_name}，item_path={media_path}")
         if not self.get_state():
-            logger.warning(f"{self.plugin_name} 状态未就绪，已跳过（请检查启用状态、token、监控路径、媒体库strm目录）")
+            logger.warning(f"状态未就绪，已跳过（请检查启用状态、token、监控路径、媒体库strm目录）")
             return
         self.__handle_delete_event_path(media_path, f"WebhookMessage.{event_name}")
 
@@ -296,33 +299,33 @@ class OpenListStrmSyncDel(_PluginBase):
 
         # 仅处理媒体库目录内的strm删除事件
         if not event_path.lower().endswith(".strm"):
-            logger.debug(f"{self.plugin_name} 跳过事件 {event_name}，非strm文件：{event_path}")
+            logger.debug(f"跳过事件 {event_name}，非strm文件：{event_path}")
             return
         if not self.__is_in_library_paths(event_path):
-            logger.debug(f"{self.plugin_name} 跳过事件 {event_name}，不在媒体库strm目录：{event_path}")
+            logger.debug(f"跳过事件 {event_name}，不在媒体库strm目录：{event_path}")
             return
 
         base_url, target_path = self.__resolve_target_from_strm(event_path)
 
         if not base_url or not target_path:
-            logger.debug(f"{self.plugin_name} 跳过事件 {event_name}，无法解析OpenList目标：{event_path}")
+            logger.debug(f"跳过事件 {event_name}，无法解析OpenList目标：{event_path}")
             return
         if not self.__in_monitor_paths(target_path):
-            logger.debug(f"{self.plugin_name} 跳过未命中监控路径的文件：{target_path}")
+            logger.debug(f"跳过未命中监控路径的文件：{target_path}")
             return
         if self.__is_recently_deleted(target_path):
-            logger.debug(f"{self.plugin_name} 跳过短时间重复删除：{target_path}")
+            logger.debug(f"跳过短时间重复删除：{target_path}")
             return
 
         if self.__remove_openlist_file(base_url=base_url, target_path=target_path):
-            logger.info(f"{self.plugin_name} 删除成功：{target_path}（事件：{event_name}）")
+            logger.info(f"删除成功：{target_path}（事件：{event_name}）")
             self.__cleanup_empty_parent_dirs(base_url=base_url, file_path=target_path)
             self._recent_deleted[target_path] = time.time()
             self.__save_history(event_name=event_name, event_path=event_path, target_path=target_path, base_url=base_url)
             if event_path.lower().endswith(".strm"):
                 self.__remove_cache_by_strm_path(event_path)
         else:
-            logger.error(f"{self.plugin_name} 删除失败：{target_path}（事件：{event_name}）")
+            logger.error(f"删除失败：{target_path}（事件：{event_name}）")
 
     def __resolve_target_from_strm(self, strm_path: str) -> Tuple[Optional[str], Optional[str]]:
         content = self.__read_strm_content(Path(strm_path))
@@ -360,7 +363,7 @@ class OpenListStrmSyncDel(_PluginBase):
         # 若事件给出的就是源文件路径，且已缓存过base_url，则按最近一次base_url处理
         latest_base_url = self.__latest_base_url()
         if latest_base_url and self.__in_monitor_paths(target_path):
-            logger.warn(f"{self.plugin_name} 未能从事件路径确定OpenList地址，使用最近一次地址：{latest_base_url}")
+            logger.warn(f"未能从事件路径确定OpenList地址，使用最近一次地址：{latest_base_url}")
             return latest_base_url, target_path
 
         return None, None
@@ -385,10 +388,10 @@ class OpenListStrmSyncDel(_PluginBase):
                 break
 
             if not self.__remove_openlist_item(base_url=base_url, item_path=current_dir, not_found_as_success=True):
-                logger.warning(f"{self.plugin_name} 空目录删除失败，停止向上清理：{current_dir}")
+                logger.warning(f"空目录删除失败，停止向上清理：{current_dir}")
                 break
 
-            logger.info(f"{self.plugin_name} 已删除空目录：{current_dir}")
+            logger.info(f"已删除空目录：{current_dir}")
             parent_dir = self.__normalize_openlist_path(str(PurePosixPath(current_dir).parent))
             if parent_dir == current_dir:
                 break
@@ -404,23 +407,23 @@ class OpenListStrmSyncDel(_PluginBase):
         }
         response = self.__openlist_post(base_url=base_url, api_path="/api/fs/list", payload=payload)
         if not response:
-            logger.warning(f"{self.plugin_name} 无法查询目录内容，跳过目录删除：{dir_path}")
+            logger.warning(f"无法查询目录内容，跳过目录删除：{dir_path}")
             return False
 
         if not response.ok:
-            logger.warning(f"{self.plugin_name} 查询目录失败，跳过目录删除：{dir_path}，HTTP {response.status_code}")
+            logger.warning(f"查询目录失败，跳过目录删除：{dir_path}，HTTP {response.status_code}")
             return False
 
         try:
             body = response.json() or {}
         except Exception:
-            logger.warning(f"{self.plugin_name} 查询目录返回非JSON，跳过目录删除：{dir_path}")
+            logger.warning(f"查询目录返回非JSON，跳过目录删除：{dir_path}")
             return False
 
         code = body.get("code")
         if code not in [None, 0, 200]:
             msg = str(body.get("message") or body.get("msg") or "").strip()
-            logger.warning(f"{self.plugin_name} 查询目录返回异常 code={code} msg={msg}，跳过目录删除：{dir_path}")
+            logger.warning(f"查询目录返回异常 code={code} msg={msg}，跳过目录删除：{dir_path}")
             return False
 
         data = body.get("data")
@@ -460,7 +463,7 @@ class OpenListStrmSyncDel(_PluginBase):
         if not response:
             return False
         if not response.ok:
-            logger.error(f"{self.plugin_name} OpenList请求失败：HTTP {response.status_code} - {response.text}")
+            logger.error(f"OpenList请求失败：HTTP {response.status_code} - {response.text}")
             return False
 
         try:
@@ -472,9 +475,9 @@ class OpenListStrmSyncDel(_PluginBase):
         msg = str(body.get("message") or body.get("msg") or "").strip()
         if code not in [None, 0, 200]:
             if not_found_as_success and "not found" in msg.lower():
-                logger.warn(f"{self.plugin_name} 目标不存在，视为成功：{item_path}")
+                logger.warn(f"目标不存在，视为成功：{item_path}")
                 return True
-            logger.error(f"{self.plugin_name} OpenList返回异常 code={code} msg={msg}")
+            logger.error(f"OpenList返回异常 code={code} msg={msg}")
             return False
         return True
 
@@ -571,8 +574,9 @@ class OpenListStrmSyncDel(_PluginBase):
         """
         scan_roots = self._library_path_roots
         if not scan_roots:
-            logger.warning(f"{self.plugin_name} 未配置媒体库strm目录（library_paths/LIBRARY_PATH），跳过strm预扫描")
+            logger.warning(f"未配置媒体库strm目录（library_paths/LIBRARY_PATH），跳过strm预扫描")
             return
+        logger.info(f"strm预扫描开始，目录：{scan_roots}")
 
         scanned = 0
         cached = 0
@@ -581,10 +585,14 @@ class OpenListStrmSyncDel(_PluginBase):
         for root in scan_roots:
             root_path = Path(root)
             if not root_path.exists() or not root_path.is_dir():
+                logger.warning(f"strm预扫描目录不存在或不可访问，已跳过：{root}")
                 continue
+            root_scanned = 0
+            root_cached = 0
             try:
                 for strm_file in root_path.rglob("*.strm"):
                     scanned += 1
+                    root_scanned += 1
                     strm_path = self.__normalize_local_path(strm_file)
                     if strm_path in self._strm_cache:
                         continue
@@ -603,13 +611,15 @@ class OpenListStrmSyncDel(_PluginBase):
                         target_path=target_path
                     )
                     cached += 1
+                    root_cached += 1
                     changed = True
             except Exception as err:
-                logger.error(f"{self.plugin_name} 扫描目录失败：{root}，原因：{err}")
+                logger.error(f"扫描目录失败：{root}，原因：{err}")
+            logger.info(f"strm预扫描目录完成：{root}，扫描 {root_scanned} 个，新增缓存 {root_cached} 个")
 
         if changed:
             self.__persist_cache()
-        logger.info(f"{self.plugin_name} strm预扫描完成，扫描 {scanned} 个，新增缓存 {cached} 个")
+        logger.info(f"strm预扫描完成，扫描 {scanned} 个，新增缓存 {cached} 个")
 
     def __get_library_paths(self) -> List[str]:
         custom_paths = self.__parse_local_paths(self._library_paths)
@@ -640,7 +650,9 @@ class OpenListStrmSyncDel(_PluginBase):
             candidates.extend([str(v).strip() for v in path_value if str(v).strip()])
         else:
             raw = str(path_value)
-            lines = raw.replace(",", "\n").splitlines()
+            for sep in [",", "，", ";", "；"]:
+                raw = raw.replace(sep, "\n")
+            lines = raw.splitlines()
             candidates.extend([line.strip() for line in lines if line.strip()])
 
         seen = set()
@@ -715,7 +727,10 @@ class OpenListStrmSyncDel(_PluginBase):
 
     def __parse_monitor_paths(self, raw_text: str) -> List[str]:
         result = []
-        for line in str(raw_text or "").splitlines():
+        text = str(raw_text or "")
+        for sep in [",", "，", ";", "；"]:
+            text = text.replace(sep, "\n")
+        for line in text.splitlines():
             value = line.strip()
             if not value:
                 continue
