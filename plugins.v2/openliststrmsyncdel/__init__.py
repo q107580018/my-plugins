@@ -19,7 +19,7 @@ class OpenListStrmSyncDel(_PluginBase):
     # 插件图标
     plugin_icon = "Alist_B.png"
     # 插件版本
-    plugin_version = "1.4"
+    plugin_version = "1.5"
     # 插件作者
     plugin_author = "Tony Stark"
     # 作者主页
@@ -62,7 +62,9 @@ class OpenListStrmSyncDel(_PluginBase):
             self._enabled = config.get("enabled", False)
             self._token = (config.get("token") or "").strip()
             self._monitor_source_paths = config.get("monitor_source_paths") or ""
-            self._library_paths = (config.get("library_paths") or config.get("library_path") or "").strip()
+            self._library_paths = (
+                config.get("library_paths") or config.get("library_path") or ""
+            ).strip()
             self._path_prefixes = self.__parse_monitor_paths(self._monitor_source_paths)
         self._library_path_roots = self.__get_library_paths()
 
@@ -78,7 +80,12 @@ class OpenListStrmSyncDel(_PluginBase):
                 self.__warmup_strm_cache()
 
     def get_state(self) -> bool:
-        return bool(self._enabled and self._token and self._path_prefixes and self._library_path_roots)
+        return bool(
+            self._enabled
+            and self._token
+            and self._path_prefixes
+            and self._library_path_roots
+        )
 
     @staticmethod
     def get_command() -> List[Dict[str, Any]]:
@@ -187,10 +194,10 @@ class OpenListStrmSyncDel(_PluginBase):
                                             "type": "info",
                                             "variant": "tonal",
                                             "text": "参数说明："
-                                                    "1) OpenList Token：用于调用OpenList删除接口；"
-                                                    "2) 监控的源文件路径：填写OpenList内路径前缀（如/115），不是本地strm目录；"
-                                                    "3) strm资源目录：填写MoviePilot可访问的本地strm目录（如/media/videos_strm/115_strm）；"
-                                                    "4) 执行删除条件：事件路径属于strm资源目录且为.strm文件，并且解析出的OpenList目标路径命中监控路径。"
+                                            "1) OpenList Token：用于调用OpenList删除接口；"
+                                            "2) 监控的源文件路径：填写OpenList内路径前缀（如/115），不是本地strm目录；"
+                                            "3) strm资源目录：填写MoviePilot可访问的本地strm目录（如/media/videos_strm/115_strm）；"
+                                            "4) 执行删除条件：事件路径属于strm资源目录且为.strm文件，并且解析出的OpenList目标路径命中监控路径。",
                                         },
                                     }
                                 ],
@@ -207,7 +214,116 @@ class OpenListStrmSyncDel(_PluginBase):
         }
 
     def get_page(self) -> List[dict]:
-        pass
+        history_data = self.get_data(self._history_key) or []
+        if not isinstance(history_data, list):
+            history_data = []
+
+        history_items = [item for item in history_data if isinstance(item, dict)][:20]
+        is_ready = self.get_state()
+        status_text = (
+            "已启用并就绪"
+            if is_ready
+            else "未就绪（请检查启用状态、token、监控路径、strm资源目录）"
+        )
+        status_type = "success" if is_ready else "warning"
+
+        table_headers = [
+            {"title": "#", "key": "index", "sortable": False},
+            {"title": "时间", "key": "time", "sortable": False},
+            {"title": "事件", "key": "event", "sortable": False},
+            {"title": "strm路径", "key": "event_path", "sortable": False},
+            {"title": "OpenList目标", "key": "target_path", "sortable": False},
+            {"title": "OpenList地址", "key": "openlist_url", "sortable": False},
+        ]
+        table_items = []
+        for index, item in enumerate(history_items, start=1):
+            table_items.append(
+                {
+                    "index": index,
+                    "time": str(item.get("time") or "-"),
+                    "event": str(item.get("event") or "-"),
+                    "event_path": str(item.get("event_path") or "-"),
+                    "target_path": str(item.get("target_path") or "-"),
+                    "openlist_url": str(item.get("openlist_url") or "-"),
+                }
+            )
+
+        history_panel: List[dict]
+        if table_items:
+            history_panel = [
+                {
+                    "component": "VDataTable",
+                    "props": {
+                        "headers": table_headers,
+                        "items": table_items,
+                        "items-per-page": 20,
+                        "density": "compact",
+                        "hover": True,
+                    },
+                }
+            ]
+        else:
+            history_panel = [
+                {
+                    "component": "VAlert",
+                    "props": {
+                        "type": "info",
+                        "variant": "tonal",
+                        "text": "暂无删除历史记录",
+                    },
+                }
+            ]
+
+        return [
+            {
+                "component": "VRow",
+                "content": [
+                    {
+                        "component": "VCol",
+                        "props": {"cols": 12},
+                        "content": [
+                            {
+                                "component": "VAlert",
+                                "props": {
+                                    "type": status_type,
+                                    "variant": "tonal",
+                                    "text": f"插件状态：{status_text}",
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
+            {
+                "component": "VRow",
+                "content": [
+                    {
+                        "component": "VCol",
+                        "props": {"cols": 12},
+                        "content": [
+                            {
+                                "component": "VAlert",
+                                "props": {
+                                    "type": "info",
+                                    "variant": "tonal",
+                                    "text": f"最近删除历史（最多展示20条，已记录 {len(history_data)} 条），当前缓存 {len(self._strm_cache)} 条映射",
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
+            {
+                "component": "VRow",
+                "content": [
+                    {
+                        "component": "VCol",
+                        "props": {"cols": 12},
+                        "content": history_panel,
+                    }
+                ],
+            },
+        ]
 
     def stop_service(self):
         self._recent_deleted = {}
@@ -235,7 +351,12 @@ class OpenListStrmSyncDel(_PluginBase):
             base_url, target_path = self.__parse_openlist_target(content)
             if not base_url or not target_path:
                 continue
-            self.__upsert_cache(strm_path=strm_path, content=content, base_url=base_url, target_path=target_path)
+            self.__upsert_cache(
+                strm_path=strm_path,
+                content=content,
+                base_url=base_url,
+                target_path=target_path,
+            )
             changed = True
 
         if changed:
@@ -251,7 +372,9 @@ class OpenListStrmSyncDel(_PluginBase):
         src = self.__safe_get(event.event_data, "src")
         logger.info(f"收到事件 DownloadFileDeleted，src={src}")
         if not self.get_state():
-            logger.warning(f"状态未就绪，已跳过（请检查启用状态、token、监控路径、strm资源目录）")
+            logger.warning(
+                f"状态未就绪，已跳过（请检查启用状态、token、监控路径、strm资源目录）"
+            )
             return
         self.__handle_delete_event_path(src, "DownloadFileDeleted")
 
@@ -268,7 +391,9 @@ class OpenListStrmSyncDel(_PluginBase):
         media_path = self.__safe_get(event_data, "media_path")
         logger.info(f"收到事件 PluginAction.networkdisk_del，media_path={media_path}")
         if not self.get_state():
-            logger.warning(f"状态未就绪，已跳过（请检查启用状态、token、监控路径、strm资源目录）")
+            logger.warning(
+                f"状态未就绪，已跳过（请检查启用状态、token、监控路径、strm资源目录）"
+            )
             return
         self.__handle_delete_event_path(media_path, "PluginAction.networkdisk_del")
 
@@ -286,7 +411,9 @@ class OpenListStrmSyncDel(_PluginBase):
         media_path = self.__safe_get(event_data, "item_path")
         logger.info(f"收到事件 WebhookMessage.{event_name}，item_path={media_path}")
         if not self.get_state():
-            logger.warning(f"状态未就绪，已跳过（请检查启用状态、token、监控路径、strm资源目录）")
+            logger.warning(
+                f"状态未就绪，已跳过（请检查启用状态、token、监控路径、strm资源目录）"
+            )
             return
         self.__handle_delete_event_path(media_path, f"WebhookMessage.{event_name}")
 
@@ -321,20 +448,32 @@ class OpenListStrmSyncDel(_PluginBase):
             logger.info(f"删除成功：{target_path}（事件：{event_name}）")
             self.__cleanup_empty_parent_dirs(base_url=base_url, file_path=target_path)
             self._recent_deleted[target_path] = time.time()
-            self.__save_history(event_name=event_name, event_path=event_path, target_path=target_path, base_url=base_url)
+            self.__save_history(
+                event_name=event_name,
+                event_path=event_path,
+                target_path=target_path,
+                base_url=base_url,
+            )
             if event_path.lower().endswith(".strm"):
                 self.__remove_cache_by_strm_path(event_path)
         else:
             logger.error(f"删除失败：{target_path}（事件：{event_name}）")
 
-    def __resolve_target_from_strm(self, strm_path: str) -> Tuple[Optional[str], Optional[str]]:
+    def __resolve_target_from_strm(
+        self, strm_path: str
+    ) -> Tuple[Optional[str], Optional[str]]:
         content = self.__read_strm_content(Path(strm_path))
         base_url, target_path = self.__parse_openlist_target(content or "")
         if not base_url and target_path:
             base_url = self.__latest_base_url()
 
         if base_url and target_path and content:
-            self.__upsert_cache(strm_path=strm_path, content=content, base_url=base_url, target_path=target_path)
+            self.__upsert_cache(
+                strm_path=strm_path,
+                content=content,
+                base_url=base_url,
+                target_path=target_path,
+            )
             self.__persist_cache()
             return base_url, target_path
 
@@ -346,7 +485,9 @@ class OpenListStrmSyncDel(_PluginBase):
                 return base_url, target_path
         return None, None
 
-    def __resolve_target_from_path(self, path_value: str) -> Tuple[Optional[str], Optional[str]]:
+    def __resolve_target_from_path(
+        self, path_value: str
+    ) -> Tuple[Optional[str], Optional[str]]:
         # 兼容事件直接给出URL
         base_url, target_path = self.__parse_openlist_target(path_value)
         if base_url and target_path:
@@ -363,20 +504,26 @@ class OpenListStrmSyncDel(_PluginBase):
         # 若事件给出的就是源文件路径，且已缓存过base_url，则按最近一次base_url处理
         latest_base_url = self.__latest_base_url()
         if latest_base_url and self.__in_monitor_paths(target_path):
-            logger.warn(f"未能从事件路径确定OpenList地址，使用最近一次地址：{latest_base_url}")
+            logger.warn(
+                f"未能从事件路径确定OpenList地址，使用最近一次地址：{latest_base_url}"
+            )
             return latest_base_url, target_path
 
         return None, None
 
     def __remove_openlist_file(self, base_url: str, target_path: str) -> bool:
-        return self.__remove_openlist_item(base_url=base_url, item_path=target_path, not_found_as_success=True)
+        return self.__remove_openlist_item(
+            base_url=base_url, item_path=target_path, not_found_as_success=True
+        )
 
     def __cleanup_empty_parent_dirs(self, base_url: str, file_path: str):
         monitor_root = self.__get_monitor_root_for_target(file_path)
         if not monitor_root:
             return
 
-        current_dir = self.__normalize_openlist_path(str(PurePosixPath(file_path).parent))
+        current_dir = self.__normalize_openlist_path(
+            str(PurePosixPath(file_path).parent)
+        )
         while current_dir and current_dir != "/" and current_dir != monitor_root:
             if not current_dir.startswith(f"{monitor_root}/"):
                 break
@@ -384,15 +531,21 @@ class OpenListStrmSyncDel(_PluginBase):
             if monitor_root == "/" and self.__path_depth(current_dir) <= 1:
                 break
 
-            if not self.__is_openlist_dir_empty(base_url=base_url, dir_path=current_dir):
+            if not self.__is_openlist_dir_empty(
+                base_url=base_url, dir_path=current_dir
+            ):
                 break
 
-            if not self.__remove_openlist_item(base_url=base_url, item_path=current_dir, not_found_as_success=True):
+            if not self.__remove_openlist_item(
+                base_url=base_url, item_path=current_dir, not_found_as_success=True
+            ):
                 logger.warning(f"空目录删除失败，停止向上清理：{current_dir}")
                 break
 
             logger.info(f"已删除空目录：{current_dir}")
-            parent_dir = self.__normalize_openlist_path(str(PurePosixPath(current_dir).parent))
+            parent_dir = self.__normalize_openlist_path(
+                str(PurePosixPath(current_dir).parent)
+            )
             if parent_dir == current_dir:
                 break
             current_dir = parent_dir
@@ -403,15 +556,19 @@ class OpenListStrmSyncDel(_PluginBase):
             "password": "",
             "page": 1,
             "per_page": 1,
-            "refresh": False
+            "refresh": False,
         }
-        response = self.__openlist_post(base_url=base_url, api_path="/api/fs/list", payload=payload)
+        response = self.__openlist_post(
+            base_url=base_url, api_path="/api/fs/list", payload=payload
+        )
         if not response:
             logger.warning(f"无法查询目录内容，跳过目录删除：{dir_path}")
             return False
 
         if not response.ok:
-            logger.warning(f"查询目录失败，跳过目录删除：{dir_path}，HTTP {response.status_code}")
+            logger.warning(
+                f"查询目录失败，跳过目录删除：{dir_path}，HTTP {response.status_code}"
+            )
             return False
 
         try:
@@ -423,7 +580,9 @@ class OpenListStrmSyncDel(_PluginBase):
         code = body.get("code")
         if code not in [None, 0, 200]:
             msg = str(body.get("message") or body.get("msg") or "").strip()
-            logger.warning(f"查询目录返回异常 code={code} msg={msg}，跳过目录删除：{dir_path}")
+            logger.warning(
+                f"查询目录返回异常 code={code} msg={msg}，跳过目录删除：{dir_path}"
+            )
             return False
 
         data = body.get("data")
@@ -444,7 +603,9 @@ class OpenListStrmSyncDel(_PluginBase):
             return len(data) == 0
         return False
 
-    def __remove_openlist_item(self, base_url: str, item_path: str, not_found_as_success: bool = False) -> bool:
+    def __remove_openlist_item(
+        self, base_url: str, item_path: str, not_found_as_success: bool = False
+    ) -> bool:
         item_path = self.__normalize_openlist_path(item_path)
         if not item_path or item_path == "/":
             return False
@@ -455,15 +616,16 @@ class OpenListStrmSyncDel(_PluginBase):
             return False
         dir_path = self.__normalize_openlist_path(str(posix_path.parent)) or "/"
 
-        payload = {
-            "dir": dir_path,
-            "names": [item_name]
-        }
-        response = self.__openlist_post(base_url=base_url, api_path="/api/fs/remove", payload=payload)
+        payload = {"dir": dir_path, "names": [item_name]}
+        response = self.__openlist_post(
+            base_url=base_url, api_path="/api/fs/remove", payload=payload
+        )
         if not response:
             return False
         if not response.ok:
-            logger.error(f"OpenList请求失败：HTTP {response.status_code} - {response.text}")
+            logger.error(
+                f"OpenList请求失败：HTTP {response.status_code} - {response.text}"
+            )
             return False
 
         try:
@@ -483,12 +645,13 @@ class OpenListStrmSyncDel(_PluginBase):
 
     def __openlist_post(self, base_url: str, api_path: str, payload: dict):
         url = f"{base_url.rstrip('/')}{api_path}"
-        headers = {
-            "Authorization": self._token,
-            "Content-Type": "application/json"
-        }
+        headers = {"Authorization": self._token, "Content-Type": "application/json"}
         response = RequestUtils(headers=headers).post_res(url, json=payload)
-        if (not response or not response.ok) and self._token and not self._token.lower().startswith("bearer "):
+        if (
+            (not response or not response.ok)
+            and self._token
+            and not self._token.lower().startswith("bearer ")
+        ):
             headers["Authorization"] = f"Bearer {self._token}"
             response = RequestUtils(headers=headers).post_res(url, json=payload)
         return response
@@ -499,7 +662,11 @@ class OpenListStrmSyncDel(_PluginBase):
             return None
         candidates = []
         for prefix in self._path_prefixes:
-            if prefix == "/" or target_path == prefix or target_path.startswith(f"{prefix}/"):
+            if (
+                prefix == "/"
+                or target_path == prefix
+                or target_path.startswith(f"{prefix}/")
+            ):
                 candidates.append(prefix)
         if not candidates:
             return None
@@ -525,7 +692,9 @@ class OpenListStrmSyncDel(_PluginBase):
             if isinstance(item, dict):
                 content = (item.get("content") or "").strip()
                 base_url = (item.get("base_url") or "").strip()
-                target_path = self.__normalize_openlist_path(item.get("target_path") or "")
+                target_path = self.__normalize_openlist_path(
+                    item.get("target_path") or ""
+                )
                 ts = int(item.get("ts") or time.time())
             else:
                 content = str(item).strip()
@@ -539,12 +708,14 @@ class OpenListStrmSyncDel(_PluginBase):
                 "content": content,
                 "base_url": base_url,
                 "target_path": target_path,
-                "ts": ts
+                "ts": ts,
             }
             self._strm_cache[strm_path] = cache_item
             self._target_cache[target_path] = cache_item
 
-    def __upsert_cache(self, strm_path: str, content: str, base_url: str, target_path: str):
+    def __upsert_cache(
+        self, strm_path: str, content: str, base_url: str, target_path: str
+    ):
         strm_path = self.__normalize_local_path(strm_path)
         target_path = self.__normalize_openlist_path(target_path)
         if not strm_path or not base_url or not target_path:
@@ -554,7 +725,7 @@ class OpenListStrmSyncDel(_PluginBase):
             "content": content.strip(),
             "base_url": base_url.strip(),
             "target_path": target_path,
-            "ts": int(time.time())
+            "ts": int(time.time()),
         }
         self._strm_cache[strm_path] = cache_item
         self._target_cache[target_path] = cache_item
@@ -574,7 +745,9 @@ class OpenListStrmSyncDel(_PluginBase):
         """
         scan_roots = self._library_path_roots
         if not scan_roots:
-            logger.warning(f"未配置strm资源目录（library_paths/LIBRARY_PATH），跳过strm预扫描")
+            logger.warning(
+                f"未配置strm资源目录（library_paths/LIBRARY_PATH），跳过strm预扫描"
+            )
             return
         logger.info(f"strm预扫描开始，目录：{scan_roots}")
 
@@ -608,14 +781,16 @@ class OpenListStrmSyncDel(_PluginBase):
                         strm_path=strm_path,
                         content=content,
                         base_url=base_url,
-                        target_path=target_path
+                        target_path=target_path,
                     )
                     cached += 1
                     root_cached += 1
                     changed = True
             except Exception as err:
                 logger.error(f"扫描目录失败：{root}，原因：{err}")
-            logger.info(f"strm预扫描目录完成：{root}，扫描 {root_scanned} 个，新增缓存 {root_cached} 个")
+            logger.info(
+                f"strm预扫描目录完成：{root}，扫描 {root_scanned} 个，新增缓存 {root_cached} 个"
+            )
 
         if changed:
             self.__persist_cache()
@@ -673,8 +848,8 @@ class OpenListStrmSyncDel(_PluginBase):
             keep_items = sorted(
                 self._strm_cache.items(),
                 key=lambda item: item[1].get("ts", 0),
-                reverse=True
-            )[:self._cache_limit]
+                reverse=True,
+            )[: self._cache_limit]
             self._strm_cache = dict(keep_items)
             self._target_cache = {
                 item.get("target_path"): item
@@ -683,16 +858,21 @@ class OpenListStrmSyncDel(_PluginBase):
             }
         self.save_data(self._cache_key, self._strm_cache)
 
-    def __save_history(self, event_name: str, event_path: str, target_path: str, base_url: str):
+    def __save_history(
+        self, event_name: str, event_path: str, target_path: str, base_url: str
+    ):
         history = self.get_data(self._history_key) or []
-        history.insert(0, {
-            "event": event_name,
-            "event_path": event_path,
-            "target_path": target_path,
-            "openlist_url": base_url,
-            "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-        })
-        self.save_data(self._history_key, history[:self._history_limit])
+        history.insert(
+            0,
+            {
+                "event": event_name,
+                "event_path": event_path,
+                "target_path": target_path,
+                "openlist_url": base_url,
+                "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+            },
+        )
+        self.save_data(self._history_key, history[: self._history_limit])
 
     def __latest_base_url(self) -> Optional[str]:
         latest_item = None
@@ -779,7 +959,9 @@ class OpenListStrmSyncDel(_PluginBase):
             logger.error(f"读取strm文件失败：{strm_file}，原因：{err}")
             return None
 
-    def __parse_openlist_target(self, raw_text: str) -> Tuple[Optional[str], Optional[str]]:
+    def __parse_openlist_target(
+        self, raw_text: str
+    ) -> Tuple[Optional[str], Optional[str]]:
         value = str(raw_text or "").strip()
         if not value:
             return None, None
@@ -809,5 +991,5 @@ class OpenListStrmSyncDel(_PluginBase):
             if path == prefix or path == f"{prefix}/":
                 return "/"
             if path.startswith(f"{prefix}/"):
-                return self.__normalize_openlist_path(path[len(prefix):])
+                return self.__normalize_openlist_path(path[len(prefix) :])
         return self.__normalize_openlist_path(path)
