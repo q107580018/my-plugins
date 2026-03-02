@@ -101,6 +101,13 @@ class OpenListStrmSyncDel(_PluginBase):
                 "description": "返回插件最近删除历史记录（默认20条）。",
             },
             {
+                "path": "/delete_history",
+                "endpoint": self.api_clear_history,
+                "methods": ["GET", "POST"],
+                "summary": "删除历史（兼容路径）",
+                "description": "兼容旧事件配置的清空历史接口。",
+            },
+            {
                 "path": "/clear_history",
                 "endpoint": self.api_clear_history,
                 "methods": ["POST", "GET"],
@@ -270,41 +277,25 @@ class OpenListStrmSyncDel(_PluginBase):
         )
         status_type = "success" if is_ready else "warning"
 
-        table_headers = [
-            {"title": "#", "key": "index", "sortable": False},
-            {"title": "时间", "key": "time", "sortable": False},
-            {"title": "事件", "key": "event", "sortable": False},
-            {"title": "strm路径", "key": "event_path", "sortable": False},
-            {"title": "OpenList目标", "key": "target_path", "sortable": False},
-            {"title": "OpenList地址", "key": "openlist_url", "sortable": False},
-        ]
-        table_items = []
-        for index, item in enumerate(history_items, start=1):
-            table_items.append(
-                {
-                    "index": index,
-                    "time": str(item.get("time") or "-"),
-                    "event": str(item.get("event") or "-"),
-                    "event_path": str(item.get("event_path") or "-"),
-                    "target_path": str(item.get("target_path") or "-"),
-                    "openlist_url": str(item.get("openlist_url") or "-"),
-                }
-            )
-
-        history_panel: List[dict]
-        if table_items:
-            history_panel = [
-                {
-                    "component": "VDataTable",
-                    "props": {
-                        "headers": table_headers,
-                        "items": table_items,
-                        "items-per-page": 20,
-                        "density": "compact",
-                        "hover": True,
-                    },
-                }
-            ]
+        history_panel: List[dict] = []
+        if history_items:
+            for index, item in enumerate(history_items, start=1):
+                event_name = str(item.get("event") or "-")
+                event_path = str(item.get("event_path") or "-")
+                target_path = str(item.get("target_path") or "-")
+                openlist_url = str(item.get("openlist_url") or "-")
+                event_time = str(item.get("time") or "-")
+                history_panel.append(
+                    {
+                        "component": "VAlert",
+                        "props": {
+                            "type": "info",
+                            "variant": "tonal",
+                            "density": "compact",
+                            "text": f"#{index} [{event_time}] {event_name}\nOpenList目标: {target_path}\nstrm路径: {event_path}\nOpenList地址: {openlist_url}",
+                        },
+                    }
+                )
         else:
             history_panel = [
                 {
@@ -335,8 +326,8 @@ class OpenListStrmSyncDel(_PluginBase):
                                 },
                                 "events": {
                                     "click": {
-                                        "api": "plugin/OpenListStrmSyncDel/clear_history",
-                                        "method": "post",
+                                        "api": "plugin/OpenListStrmSyncDel/delete_history",
+                                        "method": "get",
                                         "params": {"api_token": ""},
                                     }
                                 },
