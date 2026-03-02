@@ -19,7 +19,7 @@ class OpenListStrmSyncDel(_PluginBase):
     # 插件图标
     plugin_icon = "Alist_B.png"
     # 插件版本
-    plugin_version = "1.6"
+    plugin_version = "1.7"
     # 插件作者
     plugin_author = "Tony Stark"
     # 作者主页
@@ -116,13 +116,29 @@ class OpenListStrmSyncDel(_PluginBase):
             },
         ]
 
-    def api_history(self, limit: int = 20, api_token: str = "") -> Dict[str, Any]:
-        if not self.__verify_api_token(api_token):
+    def api_history(
+        self,
+        limit: int = 20,
+        api_token: str = "",
+        request: Any = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        token_value = self.__resolve_api_token(
+            api_token=api_token,
+            request=request,
+            kwargs=kwargs,
+        )
+        if not self.__verify_api_token(token_value):
             return {"success": False, "message": "API_TOKEN校验失败"}
 
         history = self.get_data(self._history_key) or []
         if not isinstance(history, list):
             history = []
+
+        if not isinstance(limit, int):
+            raw_limit = kwargs.get("limit")
+            if isinstance(raw_limit, str) and raw_limit.isdigit():
+                limit = int(raw_limit)
 
         if not isinstance(limit, int) or limit <= 0:
             limit = 20
@@ -137,8 +153,18 @@ class OpenListStrmSyncDel(_PluginBase):
             "data": records,
         }
 
-    def api_clear_history(self, api_token: str = "") -> Dict[str, Any]:
-        if not self.__verify_api_token(api_token):
+    def api_clear_history(
+        self,
+        api_token: str = "",
+        request: Any = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        token_value = self.__resolve_api_token(
+            api_token=api_token,
+            request=request,
+            kwargs=kwargs,
+        )
+        if not self.__verify_api_token(token_value):
             return {"success": False, "message": "API_TOKEN校验失败"}
 
         self.save_data(self._history_key, [])
@@ -314,29 +340,7 @@ class OpenListStrmSyncDel(_PluginBase):
                 "content": [
                     {
                         "component": "VCol",
-                        "props": {"cols": 12, "md": 3},
-                        "content": [
-                            {
-                                "component": "VBtn",
-                                "props": {
-                                    "color": "warning",
-                                    "variant": "tonal",
-                                    "text": "清空历史",
-                                    "prepend-icon": "mdi-delete-sweep",
-                                },
-                                "events": {
-                                    "click": {
-                                        "api": "plugin/OpenListStrmSyncDel/delete_history",
-                                        "method": "get",
-                                        "params": {"api_token": ""},
-                                    }
-                                },
-                            }
-                        ],
-                    },
-                    {
-                        "component": "VCol",
-                        "props": {"cols": 12, "md": 9},
+                        "props": {"cols": 12},
                         "content": [
                             {
                                 "component": "VAlert",
@@ -355,7 +359,7 @@ class OpenListStrmSyncDel(_PluginBase):
                 "content": [
                     {
                         "component": "VCol",
-                        "props": {"cols": 12},
+                        "props": {"cols": 12, "md": 9},
                         "content": [
                             {
                                 "component": "VAlert",
@@ -366,7 +370,29 @@ class OpenListStrmSyncDel(_PluginBase):
                                 },
                             }
                         ],
-                    }
+                    },
+                    {
+                        "component": "VCol",
+                        "props": {"cols": 12, "md": 3},
+                        "content": [
+                            {
+                                "component": "VBtn",
+                                "props": {
+                                    "color": "warning",
+                                    "variant": "tonal",
+                                    "text": "清空历史记录",
+                                    "prepend-icon": "mdi-delete-sweep",
+                                    "block": True,
+                                },
+                                "events": {
+                                    "click": {
+                                        "api": "/plugin/OpenListStrmSyncDel/delete_history",
+                                        "method": "GET",
+                                    }
+                                },
+                            }
+                        ],
+                    },
                 ],
             },
             {
@@ -940,6 +966,40 @@ class OpenListStrmSyncDel(_PluginBase):
         if not provided:
             return True
         return provided == expected
+
+    @staticmethod
+    def __resolve_api_token(
+        api_token: Any = "",
+        request: Any = None,
+        kwargs: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        token_value = api_token if isinstance(api_token, str) else ""
+        token_value = token_value.strip()
+        if token_value:
+            return token_value
+
+        ext_kwargs = kwargs if isinstance(kwargs, dict) else {}
+        kw_token = ext_kwargs.get("api_token")
+        if isinstance(kw_token, str) and kw_token.strip():
+            return kw_token.strip()
+
+        if request is not None:
+            try:
+                query_token = request.query_params.get("api_token")
+                if query_token:
+                    return str(query_token).strip()
+            except Exception:
+                pass
+            try:
+                header_token = request.headers.get(
+                    "Authorization"
+                ) or request.headers.get("X-API-Token")
+                if header_token:
+                    return str(header_token).strip()
+            except Exception:
+                pass
+
+        return ""
 
     def __latest_base_url(self) -> Optional[str]:
         latest_item = None
