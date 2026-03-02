@@ -92,7 +92,50 @@ class OpenListStrmSyncDel(_PluginBase):
         pass
 
     def get_api(self) -> List[Dict[str, Any]]:
-        pass
+        return [
+            {
+                "path": "/history",
+                "endpoint": self.api_history,
+                "methods": ["GET"],
+                "summary": "获取删除历史",
+                "description": "返回插件最近删除历史记录（默认20条）。",
+            },
+            {
+                "path": "/clear_history",
+                "endpoint": self.api_clear_history,
+                "methods": ["POST", "GET"],
+                "summary": "清空删除历史",
+                "description": "清空插件删除历史记录。",
+            },
+        ]
+
+    def api_history(self, limit: int = 20, api_token: str = "") -> Dict[str, Any]:
+        if not self.__verify_api_token(api_token):
+            return {"success": False, "message": "API_TOKEN校验失败"}
+
+        history = self.get_data(self._history_key) or []
+        if not isinstance(history, list):
+            history = []
+
+        if not isinstance(limit, int) or limit <= 0:
+            limit = 20
+        limit = min(limit, self._history_limit)
+
+        records = [item for item in history if isinstance(item, dict)][:limit]
+        return {
+            "success": True,
+            "message": "ok",
+            "total": len(history),
+            "limit": limit,
+            "data": records,
+        }
+
+    def api_clear_history(self, api_token: str = "") -> Dict[str, Any]:
+        if not self.__verify_api_token(api_token):
+            return {"success": False, "message": "API_TOKEN校验失败"}
+
+        self.save_data(self._history_key, [])
+        return {"success": True, "message": "删除历史已清空"}
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         return [
@@ -280,7 +323,29 @@ class OpenListStrmSyncDel(_PluginBase):
                 "content": [
                     {
                         "component": "VCol",
-                        "props": {"cols": 12},
+                        "props": {"cols": 12, "md": 3},
+                        "content": [
+                            {
+                                "component": "VBtn",
+                                "props": {
+                                    "color": "warning",
+                                    "variant": "tonal",
+                                    "text": "清空历史",
+                                    "prepend-icon": "mdi-delete-sweep",
+                                },
+                                "events": {
+                                    "click": {
+                                        "api": "plugin/OpenListStrmSyncDel/clear_history",
+                                        "method": "post",
+                                        "params": {"api_token": ""},
+                                    }
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "component": "VCol",
+                        "props": {"cols": 12, "md": 9},
                         "content": [
                             {
                                 "component": "VAlert",
@@ -291,7 +356,7 @@ class OpenListStrmSyncDel(_PluginBase):
                                 },
                             }
                         ],
-                    }
+                    },
                 ],
             },
             {
@@ -873,6 +938,17 @@ class OpenListStrmSyncDel(_PluginBase):
             },
         )
         self.save_data(self._history_key, history[: self._history_limit])
+
+    @staticmethod
+    def __verify_api_token(api_token: str = "") -> bool:
+        expected = str(getattr(settings, "API_TOKEN", "") or "").strip()
+        if not expected:
+            return True
+
+        provided = str(api_token or "").strip()
+        if not provided:
+            return True
+        return provided == expected
 
     def __latest_base_url(self) -> Optional[str]:
         latest_item = None
