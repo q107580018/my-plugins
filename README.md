@@ -18,7 +18,7 @@ https://github.com/q107580018/my-plugins
 
 | 插件 | 版本 | 目录 | 说明 |
 |---|---:|---|---|
-| OpenListStrmSyncDel | 1.5 | `plugins.v2/openliststrmsyncdel` | 监听 `.strm` 删除事件，联动删除 OpenList 源文件并清理空目录 |
+| OpenListStrmSyncDel | 1.6 | `plugins.v2/openliststrmsyncdel` | 监听 `.strm` 删除事件，联动删除 OpenList 源文件并清理空目录 |
 
 ## 插件说明
 

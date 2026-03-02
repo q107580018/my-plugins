@@ -19,7 +19,7 @@ class OpenListStrmSyncDel(_PluginBase):
     # 插件图标
     plugin_icon = "Alist_B.png"
     # 插件版本
-    plugin_version = "1.5"
+    plugin_version = "1.6"
     # 插件作者
     plugin_author = "Tony Stark"
     # 作者主页
@@ -343,7 +343,7 @@ class OpenListStrmSyncDel(_PluginBase):
                                 "props": {
                                     "type": status_type,
                                     "variant": "tonal",
-                                    "text": f"插件状态：{status_text}",
+                                    "text": f"插件状态：{status_text} | 版本：v{self.plugin_version}",
                                 },
                             }
                         ],
