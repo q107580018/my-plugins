@@ -100,20 +100,6 @@ class OpenListStrmSyncDel(_PluginBase):
                 "summary": "获取删除历史",
                 "description": "返回插件最近删除历史记录（默认20条）。",
             },
-            {
-                "path": "/delete_history",
-                "endpoint": self.api_clear_history,
-                "methods": ["GET", "POST"],
-                "summary": "删除历史（兼容路径）",
-                "description": "兼容旧事件配置的清空历史接口。",
-            },
-            {
-                "path": "/clear_history",
-                "endpoint": self.api_clear_history,
-                "methods": ["POST", "GET"],
-                "summary": "清空删除历史",
-                "description": "清空插件删除历史记录。",
-            },
         ]
 
     def api_history(
@@ -152,23 +138,6 @@ class OpenListStrmSyncDel(_PluginBase):
             "limit": limit,
             "data": records,
         }
-
-    def api_clear_history(
-        self,
-        api_token: str = "",
-        request: Any = None,
-        **kwargs,
-    ) -> Dict[str, Any]:
-        token_value = self.__resolve_api_token(
-            api_token=api_token,
-            request=request,
-            kwargs=kwargs,
-        )
-        if not self.__verify_api_token(token_value):
-            return {"success": False, "message": "API_TOKEN校验失败"}
-
-        self.save_data(self._history_key, [])
-        return {"success": True, "message": "删除历史已清空"}
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         return [
@@ -359,7 +328,7 @@ class OpenListStrmSyncDel(_PluginBase):
                 "content": [
                     {
                         "component": "VCol",
-                        "props": {"cols": 12, "md": 9},
+                        "props": {"cols": 12},
                         "content": [
                             {
                                 "component": "VAlert",
@@ -367,28 +336,6 @@ class OpenListStrmSyncDel(_PluginBase):
                                     "type": "info",
                                     "variant": "tonal",
                                     "text": f"最近删除历史（最多展示20条，已记录 {len(history_data)} 条），当前缓存 {len(self._strm_cache)} 条映射",
-                                },
-                            }
-                        ],
-                    },
-                    {
-                        "component": "VCol",
-                        "props": {"cols": 12, "md": 3},
-                        "content": [
-                            {
-                                "component": "VBtn",
-                                "props": {
-                                    "color": "warning",
-                                    "variant": "tonal",
-                                    "text": "清空历史记录",
-                                    "prepend-icon": "mdi-delete-sweep",
-                                    "block": True,
-                                },
-                                "events": {
-                                    "click": {
-                                        "api": "/plugin/OpenListStrmSyncDel/delete_history",
-                                        "method": "GET",
-                                    }
                                 },
                             }
                         ],
