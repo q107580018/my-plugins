@@ -3,11 +3,12 @@
     "name": "同步删除strm指向的openlist源文件",
     "description": "当触发strm删除事件时，解析strm内容并删除OpenList中的源文件。",
     "labels": "OpenList,文件整理",
-    "version": "1.7",
+    "version": "1.8",
     "icon": "Alist_B.png",
     "author": "Tony Stark",
     "level": 1,
     "history": {
+      "v1.8": "移除不可用的清空历史功能，仅保留历史展示与查询能力，确保详情页行为稳定。",
       "v1.7": "优化详情页交互：历史明细改为稳定可读展示，状态区显示当前插件版本号，并保留历史查询API。",
       "v1.6": "修复详情页历史明细显示与清空按钮无响应问题，新增delete_history兼容路径，并在状态区显示当前插件版本号。",
       "v1.5": "新增详情页历史表格展示与状态/缓存概览，并实现历史查询和清空API（/history、/clear_history）及“清空历史”按钮。",
