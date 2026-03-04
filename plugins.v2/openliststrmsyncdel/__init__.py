@@ -19,7 +19,7 @@ class OpenListStrmSyncDel(_PluginBase):
     # 插件图标
     plugin_icon = "Alist_B.png"
     # 插件版本
-    plugin_version = "1.8"
+    plugin_version = "1.9"
     # 插件作者
     plugin_author = "Tony Stark"
     # 作者主页
@@ -364,32 +364,27 @@ class OpenListStrmSyncDel(_PluginBase):
         """
         if not self._enabled or not event or not event.event_data:
             return
-        transfer_info = self.__safe_get(event.event_data, "transferinfo")
-        file_list = self.__safe_get(transfer_info, "file_list_new")
-        if not file_list:
+        self.__cache_strm_from_event_data(
+            event_data=event.event_data, event_name="TransferComplete"
+        )
+
+    @eventmanager.register(EventType.DownloadAdded)
+    def on_download_added(self, event: Event):
+        """
+        处理下载新增事件：在文件尚未删除前尽早缓存strm映射，兼容手动入库场景。
+        """
+        if not event:
             return
-
-        changed = False
-        for file_path in file_list:
-            strm_path = self.__normalize_local_path(file_path)
-            if not strm_path or not strm_path.lower().endswith(".strm"):
-                continue
-            content = self.__read_strm_content(Path(strm_path))
-            if not content:
-                continue
-            base_url, target_path = self.__parse_openlist_target(content)
-            if not base_url or not target_path:
-                continue
-            self.__upsert_cache(
-                strm_path=strm_path,
-                content=content,
-                base_url=base_url,
-                target_path=target_path,
+        src = self.__safe_get(event.event_data, "src")
+        logger.info(f"收到事件 DownloadAdded，src={src}")
+        if not self.get_state():
+            logger.warning(
+                f"状态未就绪，已跳过（请检查启用状态、token、监控路径、strm资源目录）"
             )
-            changed = True
-
-        if changed:
-            self.__persist_cache()
+            return
+        self.__cache_strm_from_event_data(
+            event_data=event.event_data, event_name="DownloadAdded"
+        )
 
     @eventmanager.register(EventType.DownloadFileDeleted)
     def on_download_file_deleted(self, event: Event):
@@ -435,16 +430,167 @@ class OpenListStrmSyncDel(_PluginBase):
             return
         event_data = event.event_data
         event_name = str(self.__safe_get(event_data, "event") or "").lower()
-        if event_name not in ["library.deleted", "media_del"]:
+        if event_name in ["library.deleted", "media_del"]:
+            media_path = self.__safe_get(event_data, "item_path")
+            logger.info(f"收到事件 WebhookMessage.{event_name}，item_path={media_path}")
+            if not self.get_state():
+                logger.warning(
+                    f"状态未就绪，已跳过（请检查启用状态、token、监控路径、strm资源目录）"
+                )
+                return
+            self.__handle_delete_event_path(media_path, f"WebhookMessage.{event_name}")
             return
-        media_path = self.__safe_get(event_data, "item_path")
-        logger.info(f"收到事件 WebhookMessage.{event_name}，item_path={media_path}")
-        if not self.get_state():
-            logger.warning(
-                f"状态未就绪，已跳过（请检查启用状态、token、监控路径、strm资源目录）"
+
+        if event_name in [
+            "library.added",
+            "library.created",
+            "library.new",
+            "media_add",
+            "media_added",
+        ]:
+            media_path = self.__safe_get(event_data, "item_path")
+            logger.info(f"收到事件 WebhookMessage.{event_name}，item_path={media_path}")
+            if not self.get_state():
+                logger.warning(
+                    f"状态未就绪，已跳过（请检查启用状态、token、监控路径、strm资源目录）"
+                )
+                return
+            self.__cache_strm_from_event_data(
+                event_data=event_data, event_name=f"WebhookMessage.{event_name}"
             )
             return
-        self.__handle_delete_event_path(media_path, f"WebhookMessage.{event_name}")
+
+    def __cache_strm_from_event_data(self, event_data: Any, event_name: str) -> int:
+        strm_paths = self.__extract_strm_paths_from_event_data(event_data)
+        if not strm_paths:
+            logger.debug(f"事件 {event_name} 未提取到strm路径")
+            return 0
+
+        changed = False
+        for strm_path in strm_paths:
+            if self.__cache_strm_path(strm_path=strm_path, event_name=event_name):
+                changed = True
+
+        if changed:
+            self.__persist_cache()
+        return len(strm_paths)
+
+    def __cache_strm_path(self, strm_path: str, event_name: str) -> bool:
+        strm_path = self.__normalize_local_path(strm_path)
+        if not strm_path or not strm_path.lower().endswith(".strm"):
+            return False
+        if not self.__is_in_library_paths(strm_path):
+            logger.debug(f"事件 {event_name} 跳过，不在strm资源目录：{strm_path}")
+            return False
+
+        content = self.__read_strm_content(Path(strm_path))
+        if not content:
+            logger.warning(f"事件 {event_name} 的strm不存在或内容为空，无法加入缓存：{strm_path}")
+            return False
+
+        base_url, target_path = self.__parse_openlist_target(content)
+        if not base_url and target_path:
+            base_url = self.__latest_base_url()
+            if base_url:
+                logger.warn(
+                    f"事件 {event_name} 未解析到OpenList地址，使用最近一次地址：{base_url}"
+                )
+
+        if not base_url or not target_path:
+            logger.warning(
+                f"事件 {event_name} 的strm内容无法解析OpenList目标，无法加入缓存：{strm_path}"
+            )
+            return False
+
+        if not self.__in_monitor_paths(target_path):
+            logger.debug(f"事件 {event_name} 解析路径未命中监控路径，跳过缓存：{target_path}")
+            return False
+
+        cache_item = self._strm_cache.get(strm_path) or {}
+        if (
+            cache_item.get("content") == content.strip()
+            and cache_item.get("base_url") == base_url.strip()
+            and cache_item.get("target_path") == target_path
+        ):
+            return False
+
+        self.__upsert_cache(
+            strm_path=strm_path,
+            content=content,
+            base_url=base_url,
+            target_path=target_path,
+        )
+        logger.info(f"已更新strm缓存：{strm_path} -> {target_path}（事件：{event_name}）")
+        return True
+
+    def __extract_strm_paths_from_event_data(self, event_data: Any) -> List[str]:
+        candidates: List[str] = []
+
+        # 常见字段优先提取，减少递归噪音
+        for key in [
+            "src",
+            "path",
+            "item_path",
+            "media_path",
+            "file_path",
+            "target_path",
+            "strm_path",
+            "dest",
+            "dst",
+            "local_path",
+        ]:
+            value = self.__safe_get(event_data, key)
+            if isinstance(value, str):
+                candidates.append(value)
+
+        transfer_info = self.__safe_get(event_data, "transferinfo")
+        for container in [event_data, transfer_info]:
+            if not container:
+                continue
+            for key in ["file_list_new", "file_list", "files", "paths", "items"]:
+                values = self.__safe_get(container, key)
+                if isinstance(values, list):
+                    candidates.extend([v for v in values if isinstance(v, str)])
+
+        # 兜底递归：兼容不同事件结构（dict/list/object）
+        candidates.extend(self.__collect_string_values(event_data))
+
+        result: List[str] = []
+        seen = set()
+        for value in candidates:
+            normalized = self.__normalize_local_path(value)
+            if not normalized or not normalized.lower().endswith(".strm"):
+                continue
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            result.append(normalized)
+        return result
+
+    def __collect_string_values(self, data: Any, depth: int = 0) -> List[str]:
+        if depth > 6 or data is None:
+            return []
+        if isinstance(data, str):
+            return [data]
+
+        result: List[str] = []
+        if isinstance(data, dict):
+            for value in data.values():
+                result.extend(self.__collect_string_values(value, depth + 1))
+            return result
+
+        if isinstance(data, (list, tuple, set)):
+            for value in data:
+                result.extend(self.__collect_string_values(value, depth + 1))
+            return result
+
+        try:
+            data_dict = getattr(data, "__dict__", None)
+            if isinstance(data_dict, dict):
+                return self.__collect_string_values(data_dict, depth + 1)
+        except Exception:
+            return []
+        return []
 
     def __handle_delete_event_path(self, raw_path: Optional[str], event_name: str):
         if not raw_path:
@@ -512,6 +658,12 @@ class OpenListStrmSyncDel(_PluginBase):
             target_path = cache_item.get("target_path")
             if base_url and target_path:
                 return base_url, target_path
+        if not content:
+            logger.warning(
+                f"strm文件已删除或内容为空，且缓存未命中，无法解析OpenList目标：{strm_path}"
+            )
+        else:
+            logger.warning(f"strm内容无法解析且缓存未命中，无法解析OpenList目标：{strm_path}")
         return None, None
 
     def __resolve_target_from_path(
@@ -851,13 +1003,25 @@ class OpenListStrmSyncDel(_PluginBase):
             return []
         candidates = []
         if isinstance(path_value, (list, tuple, set)):
-            candidates.extend([str(v).strip() for v in path_value if str(v).strip()])
+            candidates.extend(
+                [
+                    OpenListStrmSyncDel.__strip_edge_quotes(v)
+                    for v in path_value
+                    if OpenListStrmSyncDel.__strip_edge_quotes(v)
+                ]
+            )
         else:
             raw = str(path_value)
             for sep in [",", "，", ";", "；"]:
                 raw = raw.replace(sep, "\n")
             lines = raw.splitlines()
-            candidates.extend([line.strip() for line in lines if line.strip()])
+            candidates.extend(
+                [
+                    OpenListStrmSyncDel.__strip_edge_quotes(line)
+                    for line in lines
+                    if OpenListStrmSyncDel.__strip_edge_quotes(line)
+                ]
+            )
 
         seen = set()
         result = []
@@ -985,7 +1149,7 @@ class OpenListStrmSyncDel(_PluginBase):
         for sep in [",", "，", ";", "；"]:
             text = text.replace(sep, "\n")
         for line in text.splitlines():
-            value = line.strip()
+            value = self.__strip_edge_quotes(line)
             if not value:
                 continue
             _, path = self.__parse_openlist_target(value)
@@ -1003,11 +1167,11 @@ class OpenListStrmSyncDel(_PluginBase):
 
     @staticmethod
     def __normalize_local_path(path_value: Any) -> str:
-        return str(path_value or "").strip().replace("\\", "/")
+        return OpenListStrmSyncDel.__strip_edge_quotes(path_value).replace("\\", "/")
 
     @staticmethod
     def __normalize_openlist_path(path_value: Any) -> Optional[str]:
-        path = str(path_value or "").strip().replace("\\", "/")
+        path = OpenListStrmSyncDel.__strip_edge_quotes(path_value).replace("\\", "/")
         if not path:
             return None
         while "//" in path:
@@ -1036,7 +1200,7 @@ class OpenListStrmSyncDel(_PluginBase):
     def __parse_openlist_target(
         self, raw_text: str
     ) -> Tuple[Optional[str], Optional[str]]:
-        value = str(raw_text or "").strip()
+        value = self.__strip_edge_quotes(raw_text)
         if not value:
             return None, None
 
@@ -1050,6 +1214,10 @@ class OpenListStrmSyncDel(_PluginBase):
 
         target_path = self.__normalize_openlist_path(value)
         return None, target_path
+
+    @staticmethod
+    def __strip_edge_quotes(value: Any) -> str:
+        return str(value or "").strip().strip("\"'`“”‘’").strip()
 
     def __extract_openlist_path(self, parsed_url) -> Optional[str]:
         query_map = parse_qs(parsed_url.query or "")
