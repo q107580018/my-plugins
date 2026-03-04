@@ -19,7 +19,7 @@ class OpenListStrmSyncDel(_PluginBase):
     # 插件图标
     plugin_icon = "Alist_B.png"
     # 插件版本
-    plugin_version = "1.9"
+    plugin_version = "1.10"
     # 插件作者
     plugin_author = "Tony Stark"
     # 作者主页
@@ -263,7 +263,6 @@ class OpenListStrmSyncDel(_PluginBase):
         if not isinstance(history_data, list):
             history_data = []
 
-        history_items = [item for item in history_data if isinstance(item, dict)][:20]
         is_ready = self.get_state()
         status_text = (
             "已启用并就绪"
@@ -271,37 +270,6 @@ class OpenListStrmSyncDel(_PluginBase):
             else "未就绪（请检查启用状态、token、监控路径、strm资源目录）"
         )
         status_type = "success" if is_ready else "warning"
-
-        history_panel: List[dict] = []
-        if history_items:
-            for index, item in enumerate(history_items, start=1):
-                event_name = str(item.get("event") or "-")
-                event_path = str(item.get("event_path") or "-")
-                target_path = str(item.get("target_path") or "-")
-                openlist_url = str(item.get("openlist_url") or "-")
-                event_time = str(item.get("time") or "-")
-                history_panel.append(
-                    {
-                        "component": "VAlert",
-                        "props": {
-                            "type": "info",
-                            "variant": "tonal",
-                            "density": "compact",
-                            "text": f"#{index} [{event_time}] {event_name}\nOpenList目标: {target_path}\nstrm路径: {event_path}\nOpenList地址: {openlist_url}",
-                        },
-                    }
-                )
-        else:
-            history_panel = [
-                {
-                    "component": "VAlert",
-                    "props": {
-                        "type": "info",
-                        "variant": "tonal",
-                        "text": "暂无删除历史记录",
-                    },
-                }
-            ]
 
         return [
             {
@@ -335,21 +303,11 @@ class OpenListStrmSyncDel(_PluginBase):
                                 "props": {
                                     "type": "info",
                                     "variant": "tonal",
-                                    "text": f"最近删除历史（最多展示20条，已记录 {len(history_data)} 条），当前缓存 {len(self._strm_cache)} 条映射",
+                                    "text": f"最近删除历史记录已隐藏（当前已记录 {len(history_data)} 条，可通过/history API查询），当前缓存 {len(self._strm_cache)} 条映射",
                                 },
                             }
                         ],
                     },
-                ],
-            },
-            {
-                "component": "VRow",
-                "content": [
-                    {
-                        "component": "VCol",
-                        "props": {"cols": 12},
-                        "content": history_panel,
-                    }
                 ],
             },
         ]
@@ -399,6 +357,8 @@ class OpenListStrmSyncDel(_PluginBase):
             logger.warning(
                 f"状态未就绪，已跳过（请检查启用状态、token、监控路径、strm资源目录）"
             )
+            return
+        if not self.__confirm_local_strm_deleted(src):
             return
         self.__handle_delete_event_path(src, "DownloadFileDeleted")
 
@@ -474,6 +434,29 @@ class OpenListStrmSyncDel(_PluginBase):
         if changed:
             self.__persist_cache()
         return len(strm_paths)
+
+    def __confirm_local_strm_deleted(self, raw_path: Optional[str]) -> bool:
+        event_path = self.__normalize_local_path(raw_path)
+        if not event_path or not event_path.lower().endswith(".strm"):
+            return True
+        if not self.__is_in_library_paths(event_path):
+            return True
+
+        strm_file = Path(event_path)
+        if not strm_file.exists():
+            return True
+
+        # 处理极短时序抖动：等待1秒，若仍存在则判定为误触发并跳过
+        for _ in range(5):
+            time.sleep(0.2)
+            if not strm_file.exists():
+                logger.info(f"DownloadFileDeleted确认通过：文件已删除 {event_path}")
+                return True
+
+        logger.warning(
+            f"收到DownloadFileDeleted但本地strm文件仍存在，疑似误触发，已跳过删除：{event_path}"
+        )
+        return False
 
     def __cache_strm_path(self, strm_path: str, event_name: str) -> bool:
         strm_path = self.__normalize_local_path(strm_path)

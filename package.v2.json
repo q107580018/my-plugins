@@ -3,11 +3,12 @@
     "name": "同步删除strm指向的openlist源文件",
     "description": "当触发strm删除事件时，解析strm内容并删除OpenList中的源文件。",
     "labels": "OpenList,文件整理",
-    "version": "1.9",
+    "version": "1.10",
     "icon": "Alist_B.png",
     "author": "Tony Stark",
     "level": 1,
     "history": {
+      "v1.10": "为DownloadFileDeleted新增本地strm删除确认（含短等待重试），文件仍存在时跳过并告警，避免误触发导致误删OpenList源文件。",
       "v1.9": "新增DownloadAdded与Webhook新增事件缓存链路，支持手动入库strm提前入缓存；补充“strm已删除且缓存未命中”明确告警，并增强路径首尾引号容错。",
       "v1.8": "移除不可用的清空历史功能，仅保留历史展示与查询能力，确保详情页行为稳定。",
       "v1.7": "优化详情页交互：历史明细改为稳定可读展示，状态区显示当前插件版本号，并保留历史查询API。",

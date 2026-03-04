@@ -204,6 +204,62 @@ class TestPathParse(unittest.TestCase):
 
             self.assertIn(str(strm_file), self.plugin._strm_cache)
 
+    def test_skip_delete_when_download_deleted_event_but_file_still_exists(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lib_root = Path(tmpdir) / "quark_strm"
+            strm_file = lib_root / "误删风险" / "clip.strm"
+            strm_file.parent.mkdir(parents=True, exist_ok=True)
+            strm_file.write_text("http://example.com/d/quark/videos/误删风险/clip.mp4", encoding="utf-8")
+
+            self.plugin._enabled = True
+            self.plugin._token = "token"
+            self.plugin._path_prefixes = ["/quark/videos"]
+            self.plugin._library_path_roots = [str(lib_root)]
+
+            called = {"value": False}
+
+            def fake_handle(*_, **__):
+                called["value"] = True
+
+            self.plugin._OpenListStrmSyncDel__handle_delete_event_path = fake_handle
+            event = types.SimpleNamespace(event_data={"src": str(strm_file)})
+            self.plugin.on_download_file_deleted(event)
+
+            self.assertFalse(called["value"])
+            warning_logs = [
+                msg
+                for level, msg in self.logger.records
+                if level in ["warning", "warn"]
+            ]
+            self.assertTrue(
+                any("疑似误触发" in msg and str(strm_file) in msg for msg in warning_logs),
+                warning_logs,
+            )
+
+    def test_continue_delete_when_download_deleted_event_and_file_missing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lib_root = Path(tmpdir) / "quark_strm"
+            strm_file = lib_root / "正常删除" / "clip.strm"
+            strm_file.parent.mkdir(parents=True, exist_ok=True)
+            strm_file.write_text("http://example.com/d/quark/videos/正常删除/clip.mp4", encoding="utf-8")
+            strm_file.unlink()
+
+            self.plugin._enabled = True
+            self.plugin._token = "token"
+            self.plugin._path_prefixes = ["/quark/videos"]
+            self.plugin._library_path_roots = [str(lib_root)]
+
+            called = {"value": False}
+
+            def fake_handle(*_, **__):
+                called["value"] = True
+
+            self.plugin._OpenListStrmSyncDel__handle_delete_event_path = fake_handle
+            event = types.SimpleNamespace(event_data={"src": str(strm_file)})
+            self.plugin.on_download_file_deleted(event)
+
+            self.assertTrue(called["value"])
+
 
 if __name__ == "__main__":
     unittest.main()
